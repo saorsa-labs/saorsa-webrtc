@@ -59,11 +59,8 @@ pub unsafe fn c_char_to_string(ptr: *const c_char) -> Option<String> {
     if ptr.is_null() {
         return None;
     }
-    
-    CStr::from_ptr(ptr)
-        .to_str()
-        .ok()
-        .map(|s| s.to_string())
+
+    CStr::from_ptr(ptr).to_str().ok().map(|s| s.to_string())
 }
 
 #[cfg(test)]
@@ -89,13 +86,13 @@ mod tests {
     fn test_string_to_c_char() {
         let test_str = "hello world".to_string();
         let c_ptr = unsafe { string_to_c_char(test_str.clone()) };
-        
+
         assert!(!c_ptr.is_null());
-        
+
         // Convert back to verify
         let recovered = unsafe { c_char_to_string(c_ptr) };
         assert_eq!(recovered, Some(test_str));
-        
+
         // Clean up
         unsafe {
             if !c_ptr.is_null() {
@@ -118,14 +115,14 @@ mod tests {
             "with_underscores",
             "alice-bob-charlie-david",
         ];
-        
+
         for s in strings {
             let c_ptr = unsafe { string_to_c_char(s.to_string()) };
             assert!(!c_ptr.is_null());
-            
+
             let recovered = unsafe { c_char_to_string(c_ptr) };
             assert_eq!(recovered, Some(s.to_string()));
-            
+
             unsafe {
                 if !c_ptr.is_null() {
                     let _ = CString::from_raw(c_ptr);

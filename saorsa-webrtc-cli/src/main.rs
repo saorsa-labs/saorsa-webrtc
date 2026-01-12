@@ -1,10 +1,11 @@
 //! Saorsa WebRTC CLI Application
 
-use clap::{Parser, Subcommand};
-use saorsa_webrtc_core::prelude::*;
 use anyhow::Result;
+use clap::{Parser, Subcommand};
+use rand::Rng;
+use saorsa_webrtc_core::prelude::*;
 use std::sync::Arc;
-use terminal_ui::{TerminalUI, CliDisplayMode};
+use terminal_ui::{CliDisplayMode, TerminalUI};
 use tracing_subscriber;
 
 mod terminal_ui;
@@ -14,47 +15,47 @@ mod terminal_ui_tests;
 #[derive(Parser)]
 #[command(author, version, about)]
 struct Cli {
-/// Four-word identity (e.g., "alice-bob-charlie-david")
+    /// Four-word identity (e.g., "alice-bob-charlie-david")
     #[arg(short, long, env = "SAORSA_IDENTITY")]
     identity: Option<String>,
 
     #[command(subcommand)]
-command: Commands,
+    command: Commands,
 }
 
 #[derive(Subcommand)]
 enum Commands {
-/// Initiate a call
-Call {
-/// Peer to call (four-word address)
-peer: String,
+    /// Initiate a call
+    Call {
+        /// Peer to call (four-word address)
+        peer: String,
 
-    /// Enable video
-    #[arg(long, default_value = "true")]
-    video: bool,
+        /// Enable video
+        #[arg(long, default_value = "true")]
+        video: bool,
 
-/// Enable audio
-#[arg(long, default_value = "true")]
-    audio: bool,
+        /// Enable audio
+        #[arg(long, default_value = "true")]
+        audio: bool,
 
         /// Video display mode
         #[arg(long, value_enum, default_value = "sixel")]
         display: CliDisplayMode,
-},
+    },
 
-/// Start in receive mode
-Listen {
-    /// Auto-accept incoming calls
-#[arg(long)]
-auto_accept: bool,
+    /// Start in receive mode
+    Listen {
+        /// Auto-accept incoming calls
+        #[arg(long)]
+        auto_accept: bool,
 
-/// Video display mode for accepted calls
-#[arg(long, value_enum, default_value = "sixel")]
-display: CliDisplayMode,
-},
+        /// Video display mode for accepted calls
+        #[arg(long, value_enum, default_value = "sixel")]
+        display: CliDisplayMode,
+    },
 
-/// Show status and available commands
-Status,
+    /// Show status and available commands
+    Status,
 }
 
 #[tokio::main]
@@ -67,18 +68,23 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Get or generate identity
-    let identity = cli.identity.unwrap_or_else(|| {
-        // TODO: Generate random four-word identity
-        "alice-bob-charlie-david".to_string()
-    });
+    let identity = cli.identity.unwrap_or_else(generate_random_identity);
 
     println!("🔗 Using identity: {}", identity);
 
     match cli.command {
-        Commands::Call { peer, video, audio, display } => {
+        Commands::Call {
+            peer,
+            video,
+            audio,
+            display,
+        } => {
             handle_call(&identity, &peer, video, audio, display).await?;
         }
-        Commands::Listen { auto_accept, display } => {
+        Commands::Listen {
+            auto_accept,
+            display,
+        } => {
             handle_listen(&identity, auto_accept, display).await?;
         }
         Commands::Status => {
@@ -97,7 +103,10 @@ async fn handle_call(
     display: CliDisplayMode,
 ) -> Result<()> {
     println!("📞 Calling {}...", peer);
-    println!("   Video: {} | Audio: {} | Display: {:?}", video, audio, display);
+    println!(
+        "   Video: {} | Audio: {} | Display: {:?}",
+        video, audio, display
+    );
 
     // Create transport configuration
     let transport_config = TransportConfig::default();
@@ -109,9 +118,7 @@ async fn handle_call(
     let signaling = Arc::new(SignalingHandler::new(transport.clone()));
 
     // Create WebRTC service
-    let service = Arc::new(WebRtcService::builder(signaling)
-    .build()
-    .await?);
+    let service = Arc::new(WebRtcService::builder(signaling).build().await?);
 
     // Start the service
     service.start().await?;
@@ -119,9 +126,9 @@ async fn handle_call(
 
     // Set up media constraints
     let constraints = MediaConstraints {
-    audio,
-    video,
-    screen_share: false,
+        audio,
+        video,
+        screen_share: false,
     };
 
     // Initiate call
@@ -137,11 +144,7 @@ async fn handle_call(
     Ok(())
 }
 
-async fn handle_listen(
-    _identity: &str,
-    auto_accept: bool,
-    display: CliDisplayMode,
-) -> Result<()> {
+async fn handle_listen(_identity: &str, auto_accept: bool, display: CliDisplayMode) -> Result<()> {
     println!("👂 Listening for incoming calls...");
     if auto_accept {
         println!("   Auto-accept: enabled");
@@ -158,9 +161,7 @@ async fn handle_listen(
     let signaling = Arc::new(SignalingHandler::new(transport.clone()));
 
     // Create WebRTC service
-    let service = Arc::new(WebRtcService::builder(signaling)
-        .build()
-        .await?);
+    let service = Arc::new(WebRtcService::builder(signaling).build().await?);
 
     // Start the service
     service.start().await?;
@@ -239,4 +240,23 @@ async fn handle_status() -> Result<()> {
     println!("Use 'saorsa --help' for detailed options");
 
     Ok(())
+}
+
+fn generate_random_identity() -> String {
+    const WORDS: &[&str] = &[
+        "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india",
+        "juliet", "kilo", "lima", "mike", "november", "oscar", "papa", "quebec", "romeo", "sierra",
+        "tango", "uniform", "victor", "whiskey", "xray", "yankee", "zulu", "atlas", "beacon",
+        "comet", "dragon", "eagle", "falcon", "galaxy", "harbor", "icarus", "jupiter", "knight",
+        "lunar", "meteor", "nebula", "orbit", "phoenix", "quasar", "rocket", "stellar", "titan",
+        "universe", "vortex",
+    ];
+
+    let mut rng = rand::thread_rng();
+    let indices: Vec<usize> = (0..4).map(|_| rng.gen_range(0..WORDS.len())).collect();
+
+    format!(
+        "{}-{}-{}-{}",
+        WORDS[indices[0]], WORDS[indices[1]], WORDS[indices[2]], WORDS[indices[3]]
+    )
 }

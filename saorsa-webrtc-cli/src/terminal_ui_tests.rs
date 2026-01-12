@@ -23,7 +23,7 @@ mod tests {
             packets_lost: Some(10),
             packets_sent: Some(1000),
         };
-        
+
         assert_eq!(stats.rtt_ms, Some(25));
         assert_eq!(stats.bitrate_kbps, Some(1500));
         assert_eq!(stats.fps, Some(30));

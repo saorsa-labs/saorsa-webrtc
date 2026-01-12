@@ -40,6 +40,9 @@
 
 #![deny(missing_docs)]
 #![deny(unsafe_code)]
+#![deny(clippy::panic)]
+#![deny(clippy::unwrap_used)]
+#![deny(clippy::expect_used)]
 #![warn(clippy::all)]
 // Allow pedantic warnings for stub implementations
 #![allow(clippy::pedantic)]
@@ -72,6 +75,9 @@ pub mod quic_streams;
 /// Bridge between WebRTC and QUIC
 pub mod quic_bridge;
 
+/// Protocol handler for SharedTransport integration
+pub mod protocol_handler;
+
 /// Peer identity abstraction
 pub mod identity;
 
@@ -80,6 +86,10 @@ pub use call::{CallManager, CallManagerConfig};
 pub use identity::{PeerIdentity, PeerIdentityString};
 pub use media::{
     AudioDevice, AudioTrack, MediaEvent, MediaStream, MediaStreamManager, VideoDevice, VideoTrack,
+};
+pub use protocol_handler::{
+    WebRtcHandlerConfig, WebRtcHandlerError, WebRtcIncoming, WebRtcProtocolHandler,
+    WebRtcProtocolHandlerBuilder,
 };
 pub use quic_bridge::{RtpPacket, StreamConfig, StreamType, WebRtcQuicBridge};
 pub use service::{WebRtcConfig, WebRtcEvent, WebRtcService, WebRtcServiceBuilder};
@@ -91,13 +101,14 @@ pub use types::*;
 
 /// Prelude module for convenient imports
 pub mod prelude {
-pub use crate::call::{CallManager, CallManagerConfig};
-pub use crate::identity::{PeerIdentity, PeerIdentityString};
-pub use crate::media::{MediaEvent, MediaStreamManager};
-pub use crate::service::{WebRtcConfig, WebRtcEvent, WebRtcService, WebRtcServiceBuilder};
-pub use crate::signaling::{SignalingHandler, SignalingMessage, SignalingTransport};
-pub use crate::transport::{AntQuicTransport, TransportConfig};
-pub use crate::types::{
-CallEvent, CallId, CallState, MediaConstraints, MediaType, NativeQuicConfiguration,
-};
+    pub use crate::call::{CallManager, CallManagerConfig};
+    pub use crate::identity::{PeerIdentity, PeerIdentityString};
+    pub use crate::media::{MediaEvent, MediaStreamManager};
+    pub use crate::protocol_handler::{WebRtcHandlerConfig, WebRtcIncoming, WebRtcProtocolHandler};
+    pub use crate::service::{WebRtcConfig, WebRtcEvent, WebRtcService, WebRtcServiceBuilder};
+    pub use crate::signaling::{SignalingHandler, SignalingMessage, SignalingTransport};
+    pub use crate::transport::{AntQuicTransport, TransportConfig};
+    pub use crate::types::{
+        CallEvent, CallId, CallState, MediaConstraints, MediaType, NativeQuicConfiguration,
+    };
 }

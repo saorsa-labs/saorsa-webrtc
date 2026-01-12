@@ -1,8 +1,8 @@
 //! Signaling validation and edge case tests
 
 use saorsa_webrtc_core::{
-    CallManager, CallManagerConfig, call::CallError, identity::PeerIdentityString,
-    signaling::SignalingMessage, types::MediaConstraints,
+    call::CallError, identity::PeerIdentityString, signaling::SignalingMessage,
+    types::MediaConstraints, CallManager, CallManagerConfig,
 };
 
 #[tokio::test]
@@ -19,9 +19,7 @@ async fn handle_answer_rejects_empty_sdp() {
         .unwrap();
 
     let res = mgr.handle_answer(id, String::new()).await;
-    assert!(
-        matches!(res, Err(CallError::ConfigError(ref msg)) if msg.contains("cannot be empty"))
-    );
+    assert!(matches!(res, Err(CallError::ConfigError(ref msg)) if msg.contains("cannot be empty")));
 }
 
 #[tokio::test]
@@ -55,9 +53,7 @@ async fn add_ice_candidate_handles_empty() {
         .unwrap();
 
     let res_empty = mgr.add_ice_candidate(id, String::new()).await;
-    assert!(
-        res_empty.is_ok() || matches!(res_empty, Err(CallError::ConfigError(_)))
-    );
+    assert!(res_empty.is_ok() || matches!(res_empty, Err(CallError::ConfigError(_))));
 }
 
 #[tokio::test]
@@ -76,9 +72,7 @@ async fn add_ice_candidate_handles_garbage() {
     let res_bad = mgr
         .add_ice_candidate(id, "garbage-candidate-data".to_string())
         .await;
-    assert!(
-        res_bad.is_ok() || matches!(res_bad, Err(CallError::ConfigError(_)))
-    );
+    assert!(res_bad.is_ok() || matches!(res_bad, Err(CallError::ConfigError(_))));
 }
 
 #[tokio::test]

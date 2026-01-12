@@ -8,6 +8,15 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use thiserror::Error;
 
+/// Maximum signaling message size (64KB) to prevent DoS attacks
+const MAX_SIGNALING_MESSAGE_SIZE: usize = 64 * 1024;
+
+/// Maximum session ID length
+const MAX_SESSION_ID_LENGTH: usize = 256;
+
+/// Maximum SDP string length (reasonable for WebRTC)
+const MAX_SDP_LENGTH: usize = 32 * 1024;
+
 /// Transport configuration
 #[derive(Debug, Clone)]
 pub struct TransportConfig {
@@ -45,19 +54,26 @@ pub enum TransportError {
 pub struct AntQuicTransport {
     config: TransportConfig,
     node: Option<Arc<ant_quic::quic_node::QuicP2PNode>>,
-    peer_map: Arc<tokio::sync::RwLock<std::collections::HashMap<String, ant_quic::nat_traversal_api::PeerId>>>,
+    peer_map: Arc<
+        tokio::sync::RwLock<std::collections::HashMap<String, ant_quic::nat_traversal_api::PeerId>>,
+    >,
     default_peer: Arc<tokio::sync::RwLock<Option<ant_quic::nat_traversal_api::PeerId>>>,
+    shutdown: Arc<tokio::sync::watch::Sender<bool>>,
+    shutdown_rx: tokio::sync::watch::Receiver<bool>,
 }
 
 impl AntQuicTransport {
     /// Create new ant-quic transport
     #[must_use]
     pub fn new(config: TransportConfig) -> Self {
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
         Self {
             config,
             node: None,
             peer_map: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             default_peer: Arc::new(tokio::sync::RwLock::new(None)),
+            shutdown: Arc::new(shutdown_tx),
+            shutdown_rx,
         }
     }
 
@@ -73,9 +89,9 @@ impl AntQuicTransport {
     ///
     /// Returns error if node creation fails
     pub async fn start(&mut self) -> Result<(), TransportError> {
+        use ant_quic::auth::AuthConfig;
         use ant_quic::nat_traversal_api::EndpointRole;
         use ant_quic::quic_node::{QuicNodeConfig, QuicP2PNode};
-        use ant_quic::auth::AuthConfig;
         use std::time::Duration;
 
         // Use Bootstrap role for standalone operation (no external bootstraps needed)
@@ -90,29 +106,55 @@ impl AntQuicTransport {
             bind_addr: self.config.local_addr,
         };
 
-        let node = QuicP2PNode::new(node_config)
-            .await
-            .map_err(|e| TransportError::ConnectionError(format!("Failed to create QUIC node: {}", e)))?;
+        let node = QuicP2PNode::new(node_config).await.map_err(|e| {
+            TransportError::ConnectionError(format!("Failed to create QUIC node: {}", e))
+        })?;
 
         let node_arc = Arc::new(node);
-        
+
         // Spawn background task to accept incoming connections
         let node_clone = node_arc.clone();
+        let mut shutdown_rx = self.shutdown_rx.clone();
         tokio::spawn(async move {
             loop {
-                match node_clone.accept().await {
-                    Ok((addr, peer_id)) => {
-                        tracing::debug!("Accepted connection from {:?} at {}", peer_id, addr);
+                tokio::select! {
+                    _ = shutdown_rx.changed() => {
+                        if *shutdown_rx.borrow() {
+                            tracing::info!("Shutting down accept loop");
+                            break;
+                        }
                     }
-                    Err(e) => {
-                        tracing::debug!("Accept error (expected when no incoming connections): {}", e);
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    result = node_clone.accept() => {
+                        match result {
+                            Ok((addr, peer_id)) => {
+                                tracing::debug!("Accepted connection from {:?} at {}", peer_id, addr);
+                            }
+                            Err(e) => {
+                                tracing::debug!("Accept error (expected when no incoming connections): {}", e);
+                                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            }
+                        }
                     }
                 }
             }
         });
 
         self.node = Some(node_arc);
+        Ok(())
+    }
+
+    /// Stop the transport and shutdown accept loop
+    ///
+    /// # Errors
+    ///
+    /// Returns error if shutdown signal fails to send
+    pub fn stop(&self) -> Result<(), TransportError> {
+        if self.shutdown.send(true).is_err() {
+            return Err(TransportError::ConnectionError(
+                "Failed to send shutdown signal".to_string(),
+            ));
+        }
+        tracing::info!("Transport shutdown signal sent");
         Ok(())
     }
 
@@ -127,15 +169,22 @@ impl AntQuicTransport {
     ///
     /// Returns error if transport is not started
     pub async fn local_addr(&self) -> Result<SocketAddr, TransportError> {
-        let node = self.node.as_ref()
+        let node = self
+            .node
+            .as_ref()
             .ok_or_else(|| TransportError::ConnectionError("Transport not started".to_string()))?;
 
-        let mut addr = node.get_nat_endpoint()
+        let mut addr = node
+            .get_nat_endpoint()
             .map_err(|e| TransportError::ConnectionError(format!("Failed to get endpoint: {}", e)))?
             .get_quinn_endpoint()
-            .ok_or_else(|| TransportError::ConnectionError("No Quinn endpoint available".to_string()))?
+            .ok_or_else(|| {
+                TransportError::ConnectionError("No Quinn endpoint available".to_string())
+            })?
             .local_addr()
-            .map_err(|e| TransportError::ConnectionError(format!("Failed to get local address: {}", e)))?;
+            .map_err(|e| {
+                TransportError::ConnectionError(format!("Failed to get local address: {}", e))
+            })?;
 
         // If bound to 0.0.0.0, replace with localhost for connection purposes
         if addr.ip().is_unspecified() {
@@ -151,27 +200,30 @@ impl AntQuicTransport {
     ///
     /// Returns error if connection fails
     pub async fn connect_to_peer(&mut self, addr: SocketAddr) -> Result<String, TransportError> {
-        let node = self.node.as_ref()
+        let node = self
+            .node
+            .as_ref()
             .ok_or_else(|| TransportError::ConnectionError("Transport not started".to_string()))?;
 
-        let peer_id = node.connect_to_bootstrap(addr)
+        let peer_id = node
+            .connect_to_bootstrap(addr)
             .await
             .map_err(|e| TransportError::ConnectionError(format!("Failed to connect: {}", e)))?;
 
         // Generate string representation for peer ID
         let peer_str = format!("{:?}", peer_id);
-        
+
         // Store mapping
         let mut peer_map = self.peer_map.write().await;
         peer_map.insert(peer_str.clone(), peer_id);
-        
+
         // Set as default peer if no default set
         let mut default_peer = self.default_peer.write().await;
         if default_peer.is_none() {
             *default_peer = Some(peer_id);
         }
         drop(default_peer);
-        
+
         Ok(peer_str)
     }
 
@@ -186,38 +238,60 @@ impl AntQuicTransport {
         Ok(())
     }
 
-    /// Send raw bytes to default peer (for RTP packets)
+    /// Send raw bytes to default peer (for RTP packets and stream data)
+    ///
+    /// This method is used by the QUIC bridge and stream manager to send
+    /// serialized RTP packets and media data over the QUIC transport.
     ///
     /// # Errors
     ///
     /// Returns error if send fails
     pub async fn send_bytes(&self, data: &[u8]) -> Result<(), TransportError> {
-        let node = self.node.as_ref()
+        let span = tracing::debug_span!("transport_send_bytes", data_len = data.len());
+        let _enter = span.enter();
+
+        let node = self
+            .node
+            .as_ref()
             .ok_or_else(|| TransportError::SendError("Transport not started".to_string()))?;
 
         let default_peer = self.default_peer.read().await;
-        let peer_id = default_peer.as_ref()
+        let peer_id = default_peer
+            .as_ref()
             .ok_or_else(|| TransportError::SendError("No peer connected".to_string()))?;
 
         node.send_to_peer(peer_id, data)
             .await
             .map_err(|e| TransportError::SendError(format!("Failed to send: {}", e)))?;
 
+        tracing::trace!("Sent {} bytes to peer", data.len());
+
         Ok(())
     }
 
-    /// Receive raw bytes from any peer (for RTP packets)
+    /// Receive raw bytes from any peer (for RTP packets and stream data)
+    ///
+    /// This method is used by the QUIC bridge and stream manager to receive
+    /// serialized RTP packets and media data from the QUIC transport.
     ///
     /// # Errors
     ///
     /// Returns error if receive fails
     pub async fn receive_bytes(&self) -> Result<Vec<u8>, TransportError> {
-        let node = self.node.as_ref()
+        let span = tracing::debug_span!("transport_receive_bytes");
+        let _enter = span.enter();
+
+        let node = self
+            .node
+            .as_ref()
             .ok_or_else(|| TransportError::ReceiveError("Transport not started".to_string()))?;
 
-        let (_peer_id, data) = node.receive()
+        let (_peer_id, data) = node
+            .receive()
             .await
             .map_err(|e| TransportError::ReceiveError(format!("Failed to receive: {}", e)))?;
+
+        tracing::trace!("Received {} bytes from peer", data.len());
 
         Ok(data)
     }
@@ -234,20 +308,26 @@ impl SignalingTransport for AntQuicTransport {
         message: SignalingMessage,
     ) -> Result<(), TransportError> {
         if peer.is_empty() {
-            return Err(TransportError::SendError("Peer ID cannot be empty".to_string()));
+            return Err(TransportError::SendError(
+                "Peer ID cannot be empty".to_string(),
+            ));
         }
 
-        let node = self.node.as_ref()
+        let node = self
+            .node
+            .as_ref()
             .ok_or_else(|| TransportError::SendError("Transport not started".to_string()))?;
 
         // Get actual peer ID from map
         let peer_map = self.peer_map.read().await;
-        let peer_id = peer_map.get(peer)
+        let peer_id = peer_map
+            .get(peer)
             .ok_or_else(|| TransportError::SendError(format!("Peer not found: {}", peer)))?;
 
         // Serialize the message
-        let data = serde_json::to_vec(&message)
-            .map_err(|e| TransportError::SendError(format!("Failed to serialize message: {}", e)))?;
+        let data = serde_json::to_vec(&message).map_err(|e| {
+            TransportError::SendError(format!("Failed to serialize message: {}", e))
+        })?;
 
         // Send over QUIC
         node.send_to_peer(peer_id, &data)
@@ -259,22 +339,38 @@ impl SignalingTransport for AntQuicTransport {
     }
 
     async fn receive_message(&self) -> Result<(String, SignalingMessage), TransportError> {
-        let node = self.node.as_ref()
+        let node = self
+            .node
+            .as_ref()
             .ok_or_else(|| TransportError::ReceiveError("Transport not started".to_string()))?;
 
         // Receive data from any peer (this will block until data arrives)
         // The QuicP2PNode handles incoming connections internally
-        let (peer_id, data) = node.receive()
+        let (peer_id, data) = node
+            .receive()
             .await
             .map_err(|e| TransportError::ReceiveError(format!("Failed to receive: {}", e)))?;
 
+        // Check message size limit to prevent DoS
+        if data.len() > MAX_SIGNALING_MESSAGE_SIZE {
+            return Err(TransportError::ReceiveError(format!(
+                "Message size {} exceeds maximum of {} bytes",
+                data.len(),
+                MAX_SIGNALING_MESSAGE_SIZE
+            )));
+        }
+
         // Deserialize the message
-        let message: SignalingMessage = serde_json::from_slice(&data)
-            .map_err(|e| TransportError::ReceiveError(format!("Failed to deserialize message: {}", e)))?;
+        let message: SignalingMessage = serde_json::from_slice(&data).map_err(|e| {
+            TransportError::ReceiveError(format!("Failed to deserialize message: {}", e))
+        })?;
+
+        // Validate message fields
+        validate_signaling_message(&message)?;
 
         // Generate string representation for peer ID
         let peer_str = format!("{:?}", peer_id);
-        
+
         // Update peer map if needed
         let mut peer_map = self.peer_map.write().await;
         peer_map.entry(peer_str.clone()).or_insert(peer_id);
@@ -294,6 +390,63 @@ impl SignalingTransport for AntQuicTransport {
         tracing::debug!("Attempting to discover endpoint for peer: {}", peer);
         Ok(None)
     }
+}
+
+/// Validate signaling message fields to prevent abuse
+fn validate_signaling_message(message: &SignalingMessage) -> Result<(), TransportError> {
+    match message {
+        SignalingMessage::Offer {
+            session_id, sdp, ..
+        }
+        | SignalingMessage::Answer {
+            session_id, sdp, ..
+        } => {
+            if session_id.len() > MAX_SESSION_ID_LENGTH {
+                return Err(TransportError::ReceiveError(format!(
+                    "Session ID length {} exceeds maximum of {}",
+                    session_id.len(),
+                    MAX_SESSION_ID_LENGTH
+                )));
+            }
+            if sdp.len() > MAX_SDP_LENGTH {
+                return Err(TransportError::ReceiveError(format!(
+                    "SDP length {} exceeds maximum of {}",
+                    sdp.len(),
+                    MAX_SDP_LENGTH
+                )));
+            }
+        }
+        SignalingMessage::IceCandidate {
+            session_id,
+            candidate,
+            ..
+        } => {
+            if session_id.len() > MAX_SESSION_ID_LENGTH {
+                return Err(TransportError::ReceiveError(format!(
+                    "Session ID length {} exceeds maximum of {}",
+                    session_id.len(),
+                    MAX_SESSION_ID_LENGTH
+                )));
+            }
+            if candidate.len() > MAX_SDP_LENGTH {
+                return Err(TransportError::ReceiveError(format!(
+                    "Candidate length {} exceeds maximum of {}",
+                    candidate.len(),
+                    MAX_SDP_LENGTH
+                )));
+            }
+        }
+        SignalingMessage::IceComplete { session_id } | SignalingMessage::Bye { session_id, .. } => {
+            if session_id.len() > MAX_SESSION_ID_LENGTH {
+                return Err(TransportError::ReceiveError(format!(
+                    "Session ID length {} exceeds maximum of {}",
+                    session_id.len(),
+                    MAX_SESSION_ID_LENGTH
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::{broadcast, RwLock};
 use webrtc::peer_connection::RTCPeerConnection;
 
 /// Call management errors
@@ -117,16 +117,28 @@ impl<I: PeerIdentity> CallManager<I> {
 
         let call_id = CallId::new();
 
-        tracing::info!("Initiating call {} to peer: {}", call_id, callee.to_string_repr());
+        tracing::info!(
+            "Initiating call {} to peer: {}",
+            call_id,
+            callee.to_string_repr()
+        );
 
         // Create WebRTC peer connection
         let peer_connection = Arc::new(
-            webrtc::api::APIBuilder::new().build().new_peer_connection(
-                webrtc::peer_connection::configuration::RTCConfiguration::default(),
-            ).await.map_err(|e| {
-                tracing::error!("Failed to create peer connection for call {}: {}", call_id, e);
-                CallError::ConfigError(format!("Failed to create peer connection: {}", e))
-            })?
+            webrtc::api::APIBuilder::new()
+                .build()
+                .new_peer_connection(
+                    webrtc::peer_connection::configuration::RTCConfiguration::default(),
+                )
+                .await
+                .map_err(|e| {
+                    tracing::error!(
+                        "Failed to create peer connection for call {}: {}",
+                        call_id,
+                        e
+                    );
+                    CallError::ConfigError(format!("Failed to create peer connection: {}", e))
+                })?,
         );
 
         tracing::debug!("Created peer connection for call {}", call_id);
@@ -136,24 +148,32 @@ impl<I: PeerIdentity> CallManager<I> {
         let mut tracks = Vec::new();
 
         if constraints.has_audio() {
-            let audio_track = media_manager.create_audio_track().await
-                .map_err(|e| CallError::ConfigError(format!("Failed to create audio track: {:?}", e)))?;
+            let audio_track = media_manager.create_audio_track().await.map_err(|e| {
+                CallError::ConfigError(format!("Failed to create audio track: {:?}", e))
+            })?;
             tracks.push((*audio_track).clone());
 
             // Add track to peer connection
-            let track: Arc<dyn webrtc::track::track_local::TrackLocal + Send + Sync> = audio_track.track.clone();
-            peer_connection.add_track(track).await
+            let track: Arc<dyn webrtc::track::track_local::TrackLocal + Send + Sync> =
+                audio_track.track.clone();
+            peer_connection
+                .add_track(track)
+                .await
                 .map_err(|e| CallError::ConfigError(format!("Failed to add audio track: {}", e)))?;
         }
 
         if constraints.has_video() {
-            let video_track = media_manager.create_video_track().await
-                .map_err(|e| CallError::ConfigError(format!("Failed to create video track: {:?}", e)))?;
+            let video_track = media_manager.create_video_track().await.map_err(|e| {
+                CallError::ConfigError(format!("Failed to create video track: {:?}", e))
+            })?;
             tracks.push((*video_track).clone());
 
             // Add track to peer connection
-            let track: Arc<dyn webrtc::track::track_local::TrackLocal + Send + Sync> = video_track.track.clone();
-            peer_connection.add_track(track).await
+            let track: Arc<dyn webrtc::track::track_local::TrackLocal + Send + Sync> =
+                video_track.track.clone();
+            peer_connection
+                .add_track(track)
+                .await
                 .map_err(|e| CallError::ConfigError(format!("Failed to add video track: {}", e)))?;
         }
 
@@ -168,14 +188,14 @@ impl<I: PeerIdentity> CallManager<I> {
 
         let mut calls = self.calls.write().await;
         calls.insert(call_id, call);
-        
+
         // Emit call initiated event
         let _ = self.event_sender.send(CallEvent::CallInitiated {
             call_id,
             callee,
             constraints,
         });
-        
+
         Ok(call_id)
     }
 
@@ -194,16 +214,29 @@ impl<I: PeerIdentity> CallManager<I> {
             // Validate state transition
             match call.state {
                 CallState::Calling | CallState::Connecting => {
+                    let old_state = call.state;
                     call.state = CallState::Connected;
-                    
+                    tracing::debug!(
+                        call_id = %call_id,
+                        old_state = ?old_state,
+                        new_state = ?CallState::Connected,
+                        "Call state transition"
+                    );
+
                     // Emit connection established event
-                    let _ = self.event_sender.send(CallEvent::ConnectionEstablished { call_id });
-                    
+                    let _ = self
+                        .event_sender
+                        .send(CallEvent::ConnectionEstablished { call_id });
+
                     tracing::info!("Call {} accepted", call_id);
                     Ok(())
                 }
                 _ => {
-                    tracing::warn!("Invalid state transition: cannot accept call {} in state {:?}", call_id, call.state);
+                    tracing::warn!(
+                        "Invalid state transition: cannot accept call {} in state {:?}",
+                        call_id,
+                        call.state
+                    );
                     Err(CallError::InvalidState)
                 }
             }
@@ -224,15 +257,26 @@ impl<I: PeerIdentity> CallManager<I> {
             // Validate state transition - can only reject calls that are not yet connected/ended
             match call.state {
                 CallState::Calling | CallState::Connecting => {
+                    let old_state = call.state;
                     call.state = CallState::Failed;
-                    
+                    tracing::debug!(
+                        call_id = %call_id,
+                        old_state = ?old_state,
+                        new_state = ?CallState::Failed,
+                        "Call state transition"
+                    );
+
                     // Emit call rejected event
                     let _ = self.event_sender.send(CallEvent::CallRejected { call_id });
-                    
+
                     Ok(())
                 }
                 _ => {
-                    tracing::warn!("Invalid state transition: cannot reject call {} in state {:?}", call_id, call.state);
+                    tracing::warn!(
+                        "Invalid state transition: cannot reject call {} in state {:?}",
+                        call_id,
+                        call.state
+                    );
                     Err(CallError::InvalidState)
                 }
             }
@@ -258,11 +302,15 @@ impl<I: PeerIdentity> CallManager<I> {
 
             // Close the peer connection
             let _ = call.peer_connection.close().await;
-            
+
             // Emit call ended event
             let _ = self.event_sender.send(CallEvent::CallEnded { call_id });
-            
-            tracing::info!("Ended call {} and cleaned up {} tracks", call_id, call.tracks.len());
+
+            tracing::info!(
+                "Ended call {} and cleaned up {} tracks",
+                call_id,
+                call.tracks.len()
+            );
             Ok(())
         } else {
             Err(CallError::CallNotFound(call_id.to_string()))
@@ -281,24 +329,26 @@ impl<I: PeerIdentity> CallManager<I> {
     /// # Errors
     ///
     /// Returns error if offer cannot be created
+    #[tracing::instrument(skip(self), fields(call_id = %call_id))]
     pub async fn create_offer(&self, call_id: CallId) -> Result<String, CallError> {
         let calls = self.calls.read().await;
         if let Some(call) = calls.get(&call_id) {
-            tracing::debug!("Creating SDP offer for call {}", call_id);
-            let offer = call.peer_connection.create_offer(None).await
+            tracing::debug!("Creating SDP offer");
+            let offer = call.peer_connection.create_offer(None).await.map_err(|e| {
+                tracing::error!("Failed to create offer: {}", e);
+                CallError::ConfigError(format!("Failed to create offer: {}", e))
+            })?;
+            call.peer_connection
+                .set_local_description(offer.clone())
+                .await
                 .map_err(|e| {
-                    tracing::error!("Failed to create offer for call {}: {}", call_id, e);
-                    CallError::ConfigError(format!("Failed to create offer: {}", e))
-                })?;
-            call.peer_connection.set_local_description(offer.clone()).await
-                .map_err(|e| {
-                    tracing::error!("Failed to set local description for call {}: {}", call_id, e);
+                    tracing::error!("Failed to set local description: {}", e);
                     CallError::ConfigError(format!("Failed to set local description: {}", e))
                 })?;
-            tracing::debug!("SDP offer created for call {}", call_id);
+            tracing::debug!("SDP offer created successfully");
             Ok(offer.sdp)
         } else {
-            tracing::warn!("Attempted to create offer for non-existent call {}", call_id);
+            tracing::warn!("Attempted to create offer for non-existent call");
             Err(CallError::CallNotFound(call_id.to_string()))
         }
     }
@@ -308,19 +358,33 @@ impl<I: PeerIdentity> CallManager<I> {
     /// # Errors
     ///
     /// Returns error if answer cannot be handled
+    #[tracing::instrument(skip(self, sdp), fields(call_id = %call_id, sdp_len = sdp.len()))]
     pub async fn handle_answer(&self, call_id: CallId, sdp: String) -> Result<(), CallError> {
+        tracing::debug!("Processing SDP answer");
+
         let calls = self.calls.read().await;
         if let Some(call) = calls.get(&call_id) {
             // Validate SDP is not empty
             if sdp.trim().is_empty() {
-                return Err(CallError::ConfigError("SDP answer cannot be empty".to_string()));
+                return Err(CallError::ConfigError(
+                    "SDP answer cannot be empty".to_string(),
+                ));
             }
-            
-            let answer = webrtc::peer_connection::sdp::session_description::RTCSessionDescription::answer(sdp)
+
+            let answer =
+                webrtc::peer_connection::sdp::session_description::RTCSessionDescription::answer(
+                    sdp,
+                )
                 .map_err(|e| CallError::ConfigError(format!("Invalid SDP answer: {}", e)))?;
-            
-            call.peer_connection.set_remote_description(answer).await
-                .map_err(|e| CallError::ConfigError(format!("Failed to set remote description: {}", e)))?;
+
+            call.peer_connection
+                .set_remote_description(answer)
+                .await
+                .map_err(|e| {
+                    CallError::ConfigError(format!("Failed to set remote description: {}", e))
+                })?;
+
+            tracing::debug!("SDP answer processed successfully");
             Ok(())
         } else {
             Err(CallError::CallNotFound(call_id.to_string()))
@@ -332,15 +396,28 @@ impl<I: PeerIdentity> CallManager<I> {
     /// # Errors
     ///
     /// Returns error if candidate cannot be added
-    pub async fn add_ice_candidate(&self, call_id: CallId, candidate: String) -> Result<(), CallError> {
+    #[tracing::instrument(skip(self, candidate), fields(call_id = %call_id))]
+    pub async fn add_ice_candidate(
+        &self,
+        call_id: CallId,
+        candidate: String,
+    ) -> Result<(), CallError> {
+        tracing::trace!("Adding ICE candidate");
+
         let calls = self.calls.read().await;
         if let Some(call) = calls.get(&call_id) {
             let rtc_candidate = webrtc::ice_transport::ice_candidate::RTCIceCandidateInit {
                 candidate,
                 ..Default::default()
             };
-            call.peer_connection.add_ice_candidate(rtc_candidate).await
-                .map_err(|e| CallError::ConfigError(format!("Failed to add ICE candidate: {}", e)))?;
+            call.peer_connection
+                .add_ice_candidate(rtc_candidate)
+                .await
+                .map_err(|e| {
+                    CallError::ConfigError(format!("Failed to add ICE candidate: {}", e))
+                })?;
+
+            tracing::trace!("ICE candidate added successfully");
             Ok(())
         } else {
             Err(CallError::CallNotFound(call_id.to_string()))
@@ -378,12 +455,17 @@ mod tests {
     #[tokio::test]
     async fn test_call_manager_initiate_call() {
         let config = CallManagerConfig::default();
-        let call_manager = CallManager::<PeerIdentityString>::new(config).await.unwrap();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
 
         let callee = PeerIdentityString::new("callee");
         let constraints = MediaConstraints::audio_only();
 
-        let call_id = call_manager.initiate_call(callee, constraints).await.unwrap();
+        let call_id = call_manager
+            .initiate_call(callee, constraints)
+            .await
+            .unwrap();
 
         let state = call_manager.get_call_state(call_id).await;
         assert_eq!(state, Some(CallState::Calling));
@@ -392,14 +474,22 @@ mod tests {
     #[tokio::test]
     async fn test_call_manager_accept_call() {
         let config = CallManagerConfig::default();
-        let call_manager = CallManager::<PeerIdentityString>::new(config).await.unwrap();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
 
         let callee = PeerIdentityString::new("callee");
         let constraints = MediaConstraints::audio_only();
 
-        let call_id = call_manager.initiate_call(callee, constraints.clone()).await.unwrap();
+        let call_id = call_manager
+            .initiate_call(callee, constraints.clone())
+            .await
+            .unwrap();
 
-        call_manager.accept_call(call_id, constraints).await.unwrap();
+        call_manager
+            .accept_call(call_id, constraints)
+            .await
+            .unwrap();
 
         let state = call_manager.get_call_state(call_id).await;
         assert_eq!(state, Some(CallState::Connected));
@@ -408,12 +498,17 @@ mod tests {
     #[tokio::test]
     async fn test_call_manager_reject_call() {
         let config = CallManagerConfig::default();
-        let call_manager = CallManager::<PeerIdentityString>::new(config).await.unwrap();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
 
         let callee = PeerIdentityString::new("callee");
         let constraints = MediaConstraints::audio_only();
 
-        let call_id = call_manager.initiate_call(callee, constraints).await.unwrap();
+        let call_id = call_manager
+            .initiate_call(callee, constraints)
+            .await
+            .unwrap();
 
         call_manager.reject_call(call_id).await.unwrap();
 
@@ -424,12 +519,17 @@ mod tests {
     #[tokio::test]
     async fn test_call_manager_end_call() {
         let config = CallManagerConfig::default();
-        let call_manager = CallManager::<PeerIdentityString>::new(config).await.unwrap();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
 
         let callee = PeerIdentityString::new("callee");
         let constraints = MediaConstraints::audio_only();
 
-        let call_id = call_manager.initiate_call(callee, constraints).await.unwrap();
+        let call_id = call_manager
+            .initiate_call(callee, constraints)
+            .await
+            .unwrap();
 
         call_manager.end_call(call_id).await.unwrap();
 
@@ -440,12 +540,17 @@ mod tests {
     #[tokio::test]
     async fn test_call_manager_create_offer() {
         let config = CallManagerConfig::default();
-        let call_manager = CallManager::<PeerIdentityString>::new(config).await.unwrap();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
 
         let callee = PeerIdentityString::new("callee");
         let constraints = MediaConstraints::audio_only();
 
-        let _call_id = call_manager.initiate_call(callee, constraints).await.unwrap();
+        let _call_id = call_manager
+            .initiate_call(callee, constraints)
+            .await
+            .unwrap();
 
         // Skip the offer creation test for now since it requires proper codec setup
         // This would need more complex WebRTC setup
@@ -457,12 +562,17 @@ mod tests {
     #[tokio::test]
     async fn test_call_manager_add_ice_candidate() {
         let config = CallManagerConfig::default();
-        let call_manager = CallManager::<PeerIdentityString>::new(config).await.unwrap();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
 
         let callee = PeerIdentityString::new("callee");
         let constraints = MediaConstraints::audio_only();
 
-        let call_id = call_manager.initiate_call(callee, constraints).await.unwrap();
+        let call_id = call_manager
+            .initiate_call(callee, constraints)
+            .await
+            .unwrap();
 
         // Test with a dummy ICE candidate
         let candidate = "candidate:1 1 UDP 2122260223 192.168.1.1 12345 typ host".to_string();
@@ -475,12 +585,17 @@ mod tests {
     #[tokio::test]
     async fn test_call_manager_start_ice_gathering() {
         let config = CallManagerConfig::default();
-        let call_manager = CallManager::<PeerIdentityString>::new(config).await.unwrap();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
 
         let callee = PeerIdentityString::new("callee");
         let constraints = MediaConstraints::audio_only();
 
-        let call_id = call_manager.initiate_call(callee, constraints).await.unwrap();
+        let call_id = call_manager
+            .initiate_call(callee, constraints)
+            .await
+            .unwrap();
 
         let result = call_manager.start_ice_gathering(call_id).await;
         // This might fail in test environment, but should not panic
@@ -490,11 +605,15 @@ mod tests {
     #[tokio::test]
     async fn test_call_manager_call_not_found() {
         let config = CallManagerConfig::default();
-        let call_manager = CallManager::<PeerIdentityString>::new(config).await.unwrap();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
 
         let fake_call_id = CallId::new();
 
-        let result = call_manager.accept_call(fake_call_id, MediaConstraints::audio_only()).await;
+        let result = call_manager
+            .accept_call(fake_call_id, MediaConstraints::audio_only())
+            .await;
         assert!(matches!(result, Err(CallError::CallNotFound(_))));
 
         let result = call_manager.reject_call(fake_call_id).await;
@@ -506,10 +625,14 @@ mod tests {
         let result = call_manager.create_offer(fake_call_id).await;
         assert!(matches!(result, Err(CallError::CallNotFound(_))));
 
-        let result = call_manager.handle_answer(fake_call_id, "dummy".to_string()).await;
+        let result = call_manager
+            .handle_answer(fake_call_id, "dummy".to_string())
+            .await;
         assert!(matches!(result, Err(CallError::CallNotFound(_))));
 
-        let result = call_manager.add_ice_candidate(fake_call_id, "dummy".to_string()).await;
+        let result = call_manager
+            .add_ice_candidate(fake_call_id, "dummy".to_string())
+            .await;
         assert!(matches!(result, Err(CallError::CallNotFound(_))));
 
         let result = call_manager.start_ice_gathering(fake_call_id).await;

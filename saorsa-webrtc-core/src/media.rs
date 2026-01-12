@@ -2,14 +2,16 @@
 //!
 //! This module handles audio, video, and screen share media streams.
 
+use crate::types::MediaType;
+use saorsa_webrtc_codecs::{
+    OpenH264Decoder, OpenH264Encoder, VideoCodec, VideoDecoder, VideoEncoder, VideoFrame,
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::broadcast;
-use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
-use crate::types::MediaType;
-use saorsa_webrtc_codecs::{VideoCodec, VideoEncoder, VideoDecoder, VideoFrame, OpenH264Encoder, OpenH264Decoder};
+use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
 
 /// Media-related errors
 #[derive(Error, Debug)]
@@ -79,8 +81,8 @@ pub struct AudioTrack {
 
 /// Video track
 pub struct VideoTrack {
-/// Track identifier
-pub id: String,
+    /// Track identifier
+    pub id: String,
     /// WebRTC track
     pub webrtc_track: Arc<TrackLocalStaticSample>,
     /// Video encoder (optional)
@@ -95,13 +97,18 @@ pub id: String,
 
 impl VideoTrack {
     /// Create a new video track
-    pub fn new(id: String, webrtc_track: Arc<TrackLocalStaticSample>, width: u32, height: u32) -> Self {
-    Self {
-        id,
-        webrtc_track,
-        encoder: None,
-        decoder: None,
-        width,
+    pub fn new(
+        id: String,
+        webrtc_track: Arc<TrackLocalStaticSample>,
+        width: u32,
+        height: u32,
+    ) -> Self {
+        Self {
+            id,
+            webrtc_track,
+            encoder: None,
+            decoder: None,
+            width,
             height,
         }
     }
@@ -198,7 +205,10 @@ impl MediaStreamManager {
     /// # Errors
     ///
     /// Returns error if device initialization fails
+    #[tracing::instrument(skip(self))]
     pub async fn initialize(&self) -> Result<(), MediaError> {
+        tracing::debug!("Enumerating media devices");
+
         // For now, add some fake devices for testing
         // In a real implementation, this would enumerate actual hardware devices
         let audio_device = AudioDevice {
@@ -220,6 +230,11 @@ impl MediaStreamManager {
             device_id: video_device.id.clone(),
         });
 
+        tracing::debug!(
+            audio_devices = 1,
+            video_devices = 1,
+            "Media devices enumerated"
+        );
         Ok(())
     }
 
@@ -245,6 +260,7 @@ impl MediaStreamManager {
     /// Returns error if track creation fails
     pub async fn create_audio_track(&mut self) -> Result<&WebRtcTrack, MediaError> {
         let track_id = format!("audio-{}", self.webrtc_tracks.len());
+        tracing::info!(track_id = %track_id, "Creating audio track");
 
         let codec = RTCRtpCodecCapability {
             mime_type: "audio/opus".to_string(),
@@ -253,6 +269,7 @@ impl MediaStreamManager {
             sdp_fmtp_line: "".to_string(),
             rtcp_feedback: vec![],
         };
+        tracing::debug!(codec = %codec.mime_type, clock_rate = codec.clock_rate, "Audio codec configured");
 
         let track = Arc::new(TrackLocalStaticSample::new(
             codec,
@@ -263,15 +280,15 @@ impl MediaStreamManager {
         let webrtc_track = WebRtcTrack {
             track,
             track_type: MediaType::Audio,
-            id: track_id,
+            id: track_id.clone(),
         };
 
         self.webrtc_tracks.push(webrtc_track);
-        self.webrtc_tracks
-            .last()
-            .ok_or(MediaError::StreamError(
-                "Failed to get last track after push".to_string(),
-            ))
+        tracing::info!(track_id = %track_id, "Audio track created");
+
+        self.webrtc_tracks.last().ok_or(MediaError::StreamError(
+            "Failed to get last track after push".to_string(),
+        ))
     }
 
     /// Create a new video track
@@ -281,6 +298,7 @@ impl MediaStreamManager {
     /// Returns error if track creation fails
     pub async fn create_video_track(&mut self) -> Result<&WebRtcTrack, MediaError> {
         let track_id = format!("video-{}", self.webrtc_tracks.len());
+        tracing::info!(track_id = %track_id, "Creating video track");
 
         let codec = RTCRtpCodecCapability {
             mime_type: "video/VP8".to_string(),
@@ -289,6 +307,7 @@ impl MediaStreamManager {
             sdp_fmtp_line: "".to_string(),
             rtcp_feedback: vec![],
         };
+        tracing::debug!(codec = %codec.mime_type, clock_rate = codec.clock_rate, "Video codec configured");
 
         let track = Arc::new(TrackLocalStaticSample::new(
             codec,
@@ -299,15 +318,15 @@ impl MediaStreamManager {
         let webrtc_track = WebRtcTrack {
             track,
             track_type: MediaType::Video,
-            id: track_id,
+            id: track_id.clone(),
         };
 
         self.webrtc_tracks.push(webrtc_track);
-        self.webrtc_tracks
-            .last()
-            .ok_or(MediaError::StreamError(
-                "Failed to get last track after push".to_string(),
-            ))
+        tracing::info!(track_id = %track_id, "Video track created");
+
+        self.webrtc_tracks.last().ok_or(MediaError::StreamError(
+            "Failed to get last track after push".to_string(),
+        ))
     }
 
     /// Create a new video track with codec support
@@ -316,45 +335,46 @@ impl MediaStreamManager {
     ///
     /// Returns error if track creation fails
     pub async fn create_video_track_with_codec(
-    &mut self,
-    codec: VideoCodec,
-    width: u32,
-    height: u32,
+        &mut self,
+        codec: VideoCodec,
+        width: u32,
+        height: u32,
     ) -> Result<VideoTrack, MediaError> {
-    let track_id = format!("video-{}", self.webrtc_tracks.len());
+        let track_id = format!("video-{}", self.webrtc_tracks.len());
 
-    // Use H.264 codec for WebRTC when encoding is enabled
-    let mime_type = match codec {
-    VideoCodec::H264 => "video/H264".to_string(),
-    // VideoCodec::VP8 => "video/VP8".to_string(),
-    // VideoCodec::VP9 => "video/VP9".to_string(),
-    };
+        // Use H.264 codec for WebRTC when encoding is enabled
+        let mime_type = match codec {
+            VideoCodec::H264 => "video/H264".to_string(),
+            // VideoCodec::VP8 => "video/VP8".to_string(),
+            // VideoCodec::VP9 => "video/VP9".to_string(),
+        };
 
-    let codec_capability = RTCRtpCodecCapability {
-    mime_type,
-    clock_rate: 90000,
-    channels: 0,
-    sdp_fmtp_line: "".to_string(),
-    rtcp_feedback: vec![],
-    };
+        let codec_capability = RTCRtpCodecCapability {
+            mime_type,
+            clock_rate: 90000,
+            channels: 0,
+            sdp_fmtp_line: "".to_string(),
+            rtcp_feedback: vec![],
+        };
 
-    let webrtc_track = Arc::new(TrackLocalStaticSample::new(
-    codec_capability,
-    track_id.clone(),
-    "video".to_string(),
-    ));
+        let webrtc_track = Arc::new(TrackLocalStaticSample::new(
+            codec_capability,
+            track_id.clone(),
+            "video".to_string(),
+        ));
 
-    let mut video_track = VideoTrack::new(track_id, webrtc_track, width, height);
+        let mut video_track = VideoTrack::new(track_id, webrtc_track, width, height);
 
-    // Add encoder based on codec
-    match codec {
-    VideoCodec::H264 => {
-    video_track = video_track.with_h264_encoder()
-    .map_err(|e| MediaError::ConfigError(e.to_string()))?;
-    }
-    }
+        // Add encoder based on codec
+        match codec {
+            VideoCodec::H264 => {
+                video_track = video_track
+                    .with_h264_encoder()
+                    .map_err(|e| MediaError::ConfigError(e.to_string()))?;
+            }
+        }
 
-    Ok(video_track)
+        Ok(video_track)
     }
 
     /// Get all WebRTC tracks
@@ -374,8 +394,9 @@ impl MediaStreamManager {
     /// Returns true if the track was found and removed
     pub fn remove_track(&mut self, track_id: &str) -> bool {
         if let Some(pos) = self.webrtc_tracks.iter().position(|t| t.id == track_id) {
+            let track = &self.webrtc_tracks[pos];
+            tracing::info!(track_id = %track_id, track_type = ?track.track_type, "Removing track");
             self.webrtc_tracks.remove(pos);
-            tracing::debug!("Removed track: {}", track_id);
             true
         } else {
             tracing::warn!("Track not found for removal: {}", track_id);
@@ -473,8 +494,14 @@ mod tests {
         assert_ne!(tracks[0].id, tracks[1].id);
 
         // Check that we have one audio and one video track
-        let audio_count = tracks.iter().filter(|t| t.track_type == MediaType::Audio).count();
-        let video_count = tracks.iter().filter(|t| t.track_type == MediaType::Video).count();
+        let audio_count = tracks
+            .iter()
+            .filter(|t| t.track_type == MediaType::Audio)
+            .count();
+        let video_count = tracks
+            .iter()
+            .filter(|t| t.track_type == MediaType::Video)
+            .count();
 
         assert_eq!(audio_count, 1);
         assert_eq!(video_count, 1);

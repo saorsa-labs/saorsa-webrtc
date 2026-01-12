@@ -1,7 +1,10 @@
 //! Integration tests for end-to-end WebRTC functionality
 
-use saorsa_webrtc_core::{CallId, CallManager, CallManagerConfig, MediaConstraints, MediaStreamManager, SignalingHandler, SignalingTransport, PeerIdentityString, CallState, MediaType};
 use saorsa_webrtc_core::signaling::SignalingMessage;
+use saorsa_webrtc_core::{
+    CallId, CallManager, CallManagerConfig, CallState, MediaConstraints, MediaStreamManager,
+    MediaType, PeerIdentityString, SignalingHandler, SignalingTransport,
+};
 use std::sync::Arc;
 
 // Mock transport for integration testing
@@ -17,14 +20,18 @@ impl MockSignalingTransport {
     }
 
     fn send_to_peer(&self, peer: &str, message: SignalingMessage) {
-        self.peer_messages.lock().unwrap()
+        self.peer_messages
+            .lock()
+            .unwrap()
             .entry(peer.to_string())
             .or_default()
             .push(message);
     }
 
     fn receive_from_peer(&self, peer: &str) -> Option<SignalingMessage> {
-        self.peer_messages.lock().unwrap()
+        self.peer_messages
+            .lock()
+            .unwrap()
             .get_mut(peer)
             .and_then(|messages| messages.pop())
     }
@@ -47,10 +54,16 @@ impl SignalingTransport for MockSignalingTransport {
     async fn receive_message(&self) -> Result<(String, SignalingMessage), Self::Error> {
         // For integration tests, we'll simulate message passing differently
         // This is a simplified version - in real integration we'd have message queues
-        Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, "No messages"))
+        Err(std::io::Error::new(
+            std::io::ErrorKind::WouldBlock,
+            "No messages",
+        ))
     }
 
-    async fn discover_peer_endpoint(&self, _peer: &String) -> Result<Option<std::net::SocketAddr>, Self::Error> {
+    async fn discover_peer_endpoint(
+        &self,
+        _peer: &String,
+    ) -> Result<Option<std::net::SocketAddr>, Self::Error> {
         Ok(Some("127.0.0.1:8080".parse().unwrap()))
     }
 }
@@ -63,7 +76,9 @@ async fn test_full_call_flow() {
 
     // Create call manager
     let call_config = CallManagerConfig::default();
-    let call_manager = CallManager::<PeerIdentityString>::new(call_config).await.unwrap();
+    let call_manager = CallManager::<PeerIdentityString>::new(call_config)
+        .await
+        .unwrap();
 
     // Create media manager
     let media_manager = MediaStreamManager::new();
@@ -73,14 +88,20 @@ async fn test_full_call_flow() {
     let callee = PeerIdentityString::new("callee-peer");
     let constraints = MediaConstraints::video_call();
 
-    let call_id = call_manager.initiate_call(callee.clone(), constraints.clone()).await.unwrap();
+    let call_id = call_manager
+        .initiate_call(callee.clone(), constraints.clone())
+        .await
+        .unwrap();
 
     // Verify call was created
     let call_state = call_manager.get_call_state(call_id).await;
     assert_eq!(call_state, Some(CallState::Calling));
 
     // Test call acceptance
-    call_manager.accept_call(call_id, constraints).await.unwrap();
+    call_manager
+        .accept_call(call_id, constraints)
+        .await
+        .unwrap();
 
     // Verify call state changed
     let call_state = call_manager.get_call_state(call_id).await;
@@ -117,21 +138,21 @@ async fn test_media_track_creation_integration() {
 #[tokio::test]
 async fn test_quic_stream_management_integration() {
     let mut stream_manager = saorsa_webrtc_core::quic_streams::QuicMediaStreamManager::new(
-        saorsa_webrtc_core::quic_streams::QoSParams::audio()
+        saorsa_webrtc_core::quic_streams::QoSParams::audio(),
     );
 
     // Create different types of streams
-    let audio_stream_id = stream_manager.create_stream(
-        saorsa_webrtc_core::quic_streams::MediaStreamType::Audio
-    ).unwrap();
+    let audio_stream_id = stream_manager
+        .create_stream(saorsa_webrtc_core::quic_streams::MediaStreamType::Audio)
+        .unwrap();
 
-    let video_stream_id = stream_manager.create_stream(
-        saorsa_webrtc_core::quic_streams::MediaStreamType::Video
-    ).unwrap();
+    let video_stream_id = stream_manager
+        .create_stream(saorsa_webrtc_core::quic_streams::MediaStreamType::Video)
+        .unwrap();
 
-    let screen_stream_id = stream_manager.create_stream(
-        saorsa_webrtc_core::quic_streams::MediaStreamType::ScreenShare
-    ).unwrap();
+    let screen_stream_id = stream_manager
+        .create_stream(saorsa_webrtc_core::quic_streams::MediaStreamType::ScreenShare)
+        .unwrap();
 
     // Verify streams were created
     assert_eq!(audio_stream_id, 0);
@@ -140,14 +161,23 @@ async fn test_quic_stream_management_integration() {
 
     // Verify stream properties
     let audio_stream = stream_manager.get_stream(audio_stream_id).unwrap();
-    assert_eq!(audio_stream.stream_type, saorsa_webrtc_core::quic_streams::MediaStreamType::Audio);
+    assert_eq!(
+        audio_stream.stream_type,
+        saorsa_webrtc_core::quic_streams::MediaStreamType::Audio
+    );
 
     let video_stream = stream_manager.get_stream(video_stream_id).unwrap();
-    assert_eq!(video_stream.stream_type, saorsa_webrtc_core::quic_streams::MediaStreamType::Video);
+    assert_eq!(
+        video_stream.stream_type,
+        saorsa_webrtc_core::quic_streams::MediaStreamType::Video
+    );
 
     // Test stream operations
     let data = vec![1, 2, 3, 4, 5];
-    stream_manager.send_data(audio_stream_id, &data).await.unwrap();
+    stream_manager
+        .send_data(audio_stream_id, &data)
+        .await
+        .unwrap();
 
     // Test stream closing
     stream_manager.close_stream(audio_stream_id).unwrap();
@@ -179,30 +209,50 @@ async fn test_signaling_transport_integration() {
 #[tokio::test]
 async fn test_call_constraints_integration() {
     let call_config = CallManagerConfig::default();
-    let call_manager = CallManager::<PeerIdentityString>::new(call_config).await.unwrap();
+    let call_manager = CallManager::<PeerIdentityString>::new(call_config)
+        .await
+        .unwrap();
 
     // Test audio-only call
     let callee = PeerIdentityString::new("audio-peer");
     let audio_constraints = MediaConstraints::audio_only();
 
-    let audio_call_id = call_manager.initiate_call(callee.clone(), audio_constraints).await.unwrap();
+    let audio_call_id = call_manager
+        .initiate_call(callee.clone(), audio_constraints)
+        .await
+        .unwrap();
 
     // Test video call
     let video_callee = PeerIdentityString::new("video-peer");
     let video_constraints = MediaConstraints::video_call();
 
-    let video_call_id = call_manager.initiate_call(video_callee, video_constraints).await.unwrap();
+    let video_call_id = call_manager
+        .initiate_call(video_callee, video_constraints)
+        .await
+        .unwrap();
 
     // Test screen share call
     let screen_callee = PeerIdentityString::new("screen-peer");
     let screen_constraints = MediaConstraints::screen_share();
 
-    let screen_call_id = call_manager.initiate_call(screen_callee, screen_constraints).await.unwrap();
+    let screen_call_id = call_manager
+        .initiate_call(screen_callee, screen_constraints)
+        .await
+        .unwrap();
 
     // Verify all calls exist
-    assert_eq!(call_manager.get_call_state(audio_call_id).await, Some(CallState::Calling));
-    assert_eq!(call_manager.get_call_state(video_call_id).await, Some(CallState::Calling));
-    assert_eq!(call_manager.get_call_state(screen_call_id).await, Some(CallState::Calling));
+    assert_eq!(
+        call_manager.get_call_state(audio_call_id).await,
+        Some(CallState::Calling)
+    );
+    assert_eq!(
+        call_manager.get_call_state(video_call_id).await,
+        Some(CallState::Calling)
+    );
+    assert_eq!(
+        call_manager.get_call_state(screen_call_id).await,
+        Some(CallState::Calling)
+    );
 
     // Clean up
     call_manager.end_call(audio_call_id).await.unwrap();
@@ -213,17 +263,28 @@ async fn test_call_constraints_integration() {
 #[tokio::test]
 async fn test_error_handling_integration() {
     let call_config = CallManagerConfig::default();
-    let call_manager = CallManager::<PeerIdentityString>::new(call_config).await.unwrap();
+    let call_manager = CallManager::<PeerIdentityString>::new(call_config)
+        .await
+        .unwrap();
 
     // Test operations on non-existent calls
     let fake_call_id = CallId::new();
 
-    assert!(call_manager.accept_call(fake_call_id, MediaConstraints::audio_only()).await.is_err());
+    assert!(call_manager
+        .accept_call(fake_call_id, MediaConstraints::audio_only())
+        .await
+        .is_err());
     assert!(call_manager.reject_call(fake_call_id).await.is_err());
     assert!(call_manager.end_call(fake_call_id).await.is_err());
     assert!(call_manager.create_offer(fake_call_id).await.is_err());
-    assert!(call_manager.add_ice_candidate(fake_call_id, "dummy".to_string()).await.is_err());
-    assert!(call_manager.start_ice_gathering(fake_call_id).await.is_err());
+    assert!(call_manager
+        .add_ice_candidate(fake_call_id, "dummy".to_string())
+        .await
+        .is_err());
+    assert!(call_manager
+        .start_ice_gathering(fake_call_id)
+        .await
+        .is_err());
 }
 
 #[tokio::test]

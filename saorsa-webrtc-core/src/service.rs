@@ -103,7 +103,10 @@ impl<I: PeerIdentity, T: SignalingTransport> WebRtcService<I, T> {
     /// # Errors
     ///
     /// Returns error if service cannot be started
+    #[tracing::instrument(skip(self))]
     pub async fn start(&self) -> Result<(), ServiceError> {
+        tracing::info!("Starting WebRTC service");
+
         self.media
             .initialize()
             .await
@@ -114,6 +117,7 @@ impl<I: PeerIdentity, T: SignalingTransport> WebRtcService<I, T> {
             .await
             .map_err(|e| ServiceError::InitError(e.to_string()))?;
 
+        tracing::info!("WebRTC service started successfully");
         Ok(())
     }
 
@@ -122,15 +126,22 @@ impl<I: PeerIdentity, T: SignalingTransport> WebRtcService<I, T> {
     /// # Errors
     ///
     /// Returns error if call cannot be initiated
+    #[tracing::instrument(skip(self), fields(peer = %callee.to_string_repr()))]
     pub async fn initiate_call(
         &self,
         callee: I,
         constraints: MediaConstraints,
     ) -> Result<CallId, ServiceError> {
-        self.call_manager
+        tracing::info!("Initiating call");
+
+        let call_id = self
+            .call_manager
             .initiate_call(callee, constraints)
             .await
-            .map_err(|e| ServiceError::CallError(e.to_string()))
+            .map_err(|e| ServiceError::CallError(e.to_string()))?;
+
+        tracing::info!(call_id = %call_id, "Call initiated successfully");
+        Ok(call_id)
     }
 
     /// Accept a call
@@ -138,15 +149,21 @@ impl<I: PeerIdentity, T: SignalingTransport> WebRtcService<I, T> {
     /// # Errors
     ///
     /// Returns error if call cannot be accepted
+    #[tracing::instrument(skip(self), fields(call_id = %call_id))]
     pub async fn accept_call(
         &self,
         call_id: CallId,
         constraints: MediaConstraints,
     ) -> Result<(), ServiceError> {
+        tracing::info!("Accepting call");
+
         self.call_manager
             .accept_call(call_id, constraints)
             .await
-            .map_err(|e| ServiceError::CallError(e.to_string()))
+            .map_err(|e| ServiceError::CallError(e.to_string()))?;
+
+        tracing::info!("Call accepted");
+        Ok(())
     }
 
     /// Reject a call
@@ -154,11 +171,17 @@ impl<I: PeerIdentity, T: SignalingTransport> WebRtcService<I, T> {
     /// # Errors
     ///
     /// Returns error if call cannot be rejected
+    #[tracing::instrument(skip(self), fields(call_id = %call_id))]
     pub async fn reject_call(&self, call_id: CallId) -> Result<(), ServiceError> {
+        tracing::info!("Rejecting call");
+
         self.call_manager
             .reject_call(call_id)
             .await
-            .map_err(|e| ServiceError::CallError(e.to_string()))
+            .map_err(|e| ServiceError::CallError(e.to_string()))?;
+
+        tracing::info!("Call rejected");
+        Ok(())
     }
 
     /// End a call
@@ -166,11 +189,17 @@ impl<I: PeerIdentity, T: SignalingTransport> WebRtcService<I, T> {
     /// # Errors
     ///
     /// Returns error if call cannot be ended
+    #[tracing::instrument(skip(self), fields(call_id = %call_id))]
     pub async fn end_call(&self, call_id: CallId) -> Result<(), ServiceError> {
+        tracing::info!("Ending call");
+
         self.call_manager
             .end_call(call_id)
             .await
-            .map_err(|e| ServiceError::CallError(e.to_string()))
+            .map_err(|e| ServiceError::CallError(e.to_string()))?;
+
+        tracing::info!("Call ended");
+        Ok(())
     }
 
     /// Get call state

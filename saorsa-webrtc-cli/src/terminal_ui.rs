@@ -1,5 +1,11 @@
 //! Terminal User Interface for Saorsa WebRTC CLI
 
+use anyhow::Result;
+use crossterm::{
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
@@ -8,17 +14,11 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
     Frame, Terminal,
 };
-use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
 use std::{
     io::{self, Stdout},
     sync::Arc,
     time::{Duration, Instant},
 };
-use anyhow::Result;
 
 use saorsa_webrtc_core::{prelude::*, types::CallId};
 
@@ -43,7 +43,7 @@ pub struct TerminalUI {
     video_enabled: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ConnectionStats {
     pub rtt_ms: Option<u32>,
     pub bitrate_kbps: Option<u32>,
@@ -52,29 +52,24 @@ pub struct ConnectionStats {
     pub packets_sent: Option<u32>,
 }
 
-impl Default for ConnectionStats {
-    fn default() -> Self {
-        Self {
-            rtt_ms: None,
-            bitrate_kbps: None,
-            fps: None,
-            packets_lost: None,
-            packets_sent: None,
-        }
-    }
-}
-
 /// Static UI drawing function for closures
-fn draw_ui_static(f: &mut Frame, display_mode: DisplayMode, stats: ConnectionStats, muted: bool, video_enabled: bool, start_time: Instant) {
+fn draw_ui_static(
+    f: &mut Frame,
+    display_mode: DisplayMode,
+    stats: ConnectionStats,
+    muted: bool,
+    video_enabled: bool,
+    start_time: Instant,
+) {
     let size = f.size();
 
     // Split the screen vertically
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(10),    // Video area
-            Constraint::Length(3),  // Stats
-            Constraint::Length(3),  // Controls
+            Constraint::Min(10),   // Video area
+            Constraint::Length(3), // Stats
+            Constraint::Length(3), // Controls
         ])
         .split(size);
 
@@ -115,9 +110,10 @@ fn draw_video_area_static(f: &mut Frame, area: Rect, display_mode: DisplayMode) 
             ]
         }
         DisplayMode::None => {
-            vec![Line::from(vec![
-                Span::styled("Video disabled", Style::default().fg(Color::Yellow)),
-            ])]
+            vec![Line::from(vec![Span::styled(
+                "Video disabled",
+                Style::default().fg(Color::Yellow),
+            )])]
         }
     };
 
@@ -158,24 +154,33 @@ fn draw_stats_area_static(f: &mut Frame, area: Rect, stats: ConnectionStats, sta
 
 /// Draw the controls area (static)
 fn draw_controls_area_static(f: &mut Frame, area: Rect, muted: bool, video_enabled: bool) {
-    let block = Block::default()
-        .title("🎮 Controls")
-        .borders(Borders::ALL);
+    let block = Block::default().title("🎮 Controls").borders(Borders::ALL);
 
-    let controls = vec![
-        Line::from(vec![
-            Span::styled("(q/Esc)", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
-            Span::raw(" Quit | "),
-            Span::styled("(m)", Style::default().fg(if muted { Color::Red } else { Color::Green })),
-            Span::raw(" Mute | "),
-            Span::styled("(v)", Style::default().fg(if video_enabled { Color::Green } else { Color::Yellow })),
-            Span::raw(" Video | "),
-            Span::styled("(s)", Style::default().fg(Color::Blue)),
-            Span::raw(" Stats | "),
-            Span::styled("(h)", Style::default().fg(Color::Blue)),
-            Span::raw(" Help"),
-        ]),
-    ];
+    let controls = vec![Line::from(vec![
+        Span::styled(
+            "(q/Esc)",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" Quit | "),
+        Span::styled(
+            "(m)",
+            Style::default().fg(if muted { Color::Red } else { Color::Green }),
+        ),
+        Span::raw(" Mute | "),
+        Span::styled(
+            "(v)",
+            Style::default().fg(if video_enabled {
+                Color::Green
+            } else {
+                Color::Yellow
+            }),
+        ),
+        Span::raw(" Video | "),
+        Span::styled("(s)", Style::default().fg(Color::Blue)),
+        Span::raw(" Stats | "),
+        Span::styled("(h)", Style::default().fg(Color::Blue)),
+        Span::raw(" Help"),
+    ])];
 
     let paragraph = Paragraph::new(controls).block(block);
     f.render_widget(paragraph, area);
@@ -241,7 +246,14 @@ impl TerminalUI {
             let start_time = self.start_time;
             let display_mode = self.display_mode;
             self.terminal.draw(|f| {
-                draw_ui_static(f, display_mode, stats.clone(), muted, video_enabled, start_time)
+                draw_ui_static(
+                    f,
+                    display_mode,
+                    stats.clone(),
+                    muted,
+                    video_enabled,
+                    start_time,
+                )
             })?;
 
             // Small delay to prevent excessive CPU usage
@@ -267,21 +279,36 @@ impl TerminalUI {
     }
 
     /// Draw the main UI
+    #[allow(dead_code)]
     fn draw_ui(&self, f: &mut Frame) {
-        self.draw_ui_with_state(f, self.stats.clone(), self.muted, self.video_enabled, self.start_time);
+        self.draw_ui_with_state(
+            f,
+            self.stats.clone(),
+            self.muted,
+            self.video_enabled,
+            self.start_time,
+        );
     }
 
     /// Draw the main UI with provided state
-    fn draw_ui_with_state(&self, f: &mut Frame, stats: ConnectionStats, muted: bool, video_enabled: bool, start_time: Instant) {
+    #[allow(dead_code)]
+    fn draw_ui_with_state(
+        &self,
+        f: &mut Frame,
+        stats: ConnectionStats,
+        muted: bool,
+        video_enabled: bool,
+        start_time: Instant,
+    ) {
         let size = f.size();
 
         // Split the screen vertically
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(10),    // Video area
-                Constraint::Length(3),  // Stats
-                Constraint::Length(3),  // Controls
+                Constraint::Min(10),   // Video area
+                Constraint::Length(3), // Stats
+                Constraint::Length(3), // Controls
             ])
             .split(size);
 
@@ -322,9 +349,10 @@ impl TerminalUI {
                 ]
             }
             DisplayMode::None => {
-                vec![Line::from(vec![
-                    Span::styled("Video disabled", Style::default().fg(Color::Yellow)),
-                ])]
+                vec![Line::from(vec![Span::styled(
+                    "Video disabled",
+                    Style::default().fg(Color::Yellow),
+                )])]
             }
         };
 
@@ -336,12 +364,19 @@ impl TerminalUI {
     }
 
     /// Draw the statistics area
+    #[allow(dead_code)]
     fn draw_stats_area(&self, f: &mut Frame, area: Rect) {
         self.draw_stats_area_with_state(f, area, self.stats.clone(), self.start_time);
     }
 
     /// Draw the statistics area with provided state
-    fn draw_stats_area_with_state(&self, f: &mut Frame, area: Rect, stats: ConnectionStats, start_time: Instant) {
+    fn draw_stats_area_with_state(
+        &self,
+        f: &mut Frame,
+        area: Rect,
+        stats: ConnectionStats,
+        start_time: Instant,
+    ) {
         let block = Block::default()
             .title("📊 Statistics")
             .borders(Borders::ALL);
@@ -369,36 +404,53 @@ impl TerminalUI {
     }
 
     /// Draw the controls area
+    #[allow(dead_code)]
     fn draw_controls_area(&self, f: &mut Frame, area: Rect) {
         self.draw_controls_area_with_state(f, area, self.muted, self.video_enabled);
     }
 
     /// Draw the controls area with provided state
-    fn draw_controls_area_with_state(&self, f: &mut Frame, area: Rect, muted: bool, video_enabled: bool) {
-        let block = Block::default()
-            .title("🎮 Controls")
-            .borders(Borders::ALL);
+    fn draw_controls_area_with_state(
+        &self,
+        f: &mut Frame,
+        area: Rect,
+        muted: bool,
+        video_enabled: bool,
+    ) {
+        let block = Block::default().title("🎮 Controls").borders(Borders::ALL);
 
-        let controls = vec![
-            Line::from(vec![
-                Span::styled("(q/Esc)", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
-                Span::raw(" Quit | "),
-                Span::styled("(m)", Style::default().fg(if muted { Color::Red } else { Color::Green })),
-                Span::raw(" Mute | "),
-                Span::styled("(v)", Style::default().fg(if video_enabled { Color::Green } else { Color::Yellow })),
-                Span::raw(" Video | "),
-                Span::styled("(s)", Style::default().fg(Color::Blue)),
-                Span::raw(" Stats | "),
-                Span::styled("(h)", Style::default().fg(Color::Blue)),
-                Span::raw(" Help"),
-            ]),
-        ];
+        let controls = vec![Line::from(vec![
+            Span::styled(
+                "(q/Esc)",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" Quit | "),
+            Span::styled(
+                "(m)",
+                Style::default().fg(if muted { Color::Red } else { Color::Green }),
+            ),
+            Span::raw(" Mute | "),
+            Span::styled(
+                "(v)",
+                Style::default().fg(if video_enabled {
+                    Color::Green
+                } else {
+                    Color::Yellow
+                }),
+            ),
+            Span::raw(" Video | "),
+            Span::styled("(s)", Style::default().fg(Color::Blue)),
+            Span::raw(" Stats | "),
+            Span::styled("(h)", Style::default().fg(Color::Blue)),
+            Span::raw(" Help"),
+        ])];
 
         let paragraph = Paragraph::new(controls).block(block);
         f.render_widget(paragraph, area);
     }
 
     /// Display a video frame
+    #[allow(dead_code)]
     pub fn display_frame(&mut self, frame_data: &[u8]) -> Result<()> {
         match self.display_mode {
             DisplayMode::Sixel => {
@@ -422,6 +474,7 @@ impl TerminalUI {
     }
 
     /// Show help dialog
+    #[allow(dead_code)]
     pub fn show_help(&self) {
         // TODO: Implement help overlay
     }

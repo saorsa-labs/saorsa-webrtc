@@ -1,4 +1,14 @@
 //! OpenH264 codec implementation
+//!
+//! # ⚠️ STUB IMPLEMENTATION
+//!
+//! This is currently a **simulation implementation** for development and testing.
+//! It uses simple compression to simulate codec behavior (~25% size reduction).
+//!
+//! **Not suitable for production video calls.**
+//!
+//! For production use, replace with actual openh264 integration using the
+//! openh264-sys bindings or similar library.
 
 use crate::{CodecError, Result, VideoDecoder, VideoEncoder, VideoFrame};
 use crate::{MAX_HEIGHT, MAX_RGB_SIZE, MAX_WIDTH};
@@ -6,7 +16,7 @@ use bytes::Bytes;
 
 const HEADER_SIZE: usize = 16;
 
-/// OpenH264 video encoder (stub implementation for now)
+/// OpenH264 video encoder (stub/simulation implementation)
 pub struct OpenH264Encoder {
     width: u32,
     height: u32,
@@ -25,12 +35,12 @@ impl OpenH264Encoder {
         if width > MAX_WIDTH || height > MAX_HEIGHT {
             return Err(CodecError::InvalidDimensions(width, height));
         }
-        
+
         let rgb_size = width
             .checked_mul(height)
             .and_then(|px| px.checked_mul(3))
             .ok_or(CodecError::Overflow)?;
-        
+
         if rgb_size as usize > MAX_RGB_SIZE {
             return Err(CodecError::SizeExceeded {
                 actual: rgb_size as usize,
@@ -265,7 +275,10 @@ mod tests {
 
         let result = encoder.encode(&frame);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), CodecError::DimensionMismatch { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            CodecError::DimensionMismatch { .. }
+        ));
     }
 
     #[test]
@@ -279,12 +292,12 @@ mod tests {
     #[test]
     fn test_decoder_invalid_dimensions() {
         let mut decoder = OpenH264Decoder::new().unwrap();
-        
+
         let mut data = Vec::new();
         data.extend_from_slice(&0u32.to_le_bytes());
         data.extend_from_slice(&480u32.to_le_bytes());
         data.extend_from_slice(&1234u64.to_le_bytes());
-        
+
         let result = decoder.decode(&data);
         assert!(result.is_err());
     }
@@ -292,12 +305,12 @@ mod tests {
     #[test]
     fn test_decoder_oversized_dimensions() {
         let mut decoder = OpenH264Decoder::new().unwrap();
-        
+
         let mut data = Vec::new();
         data.extend_from_slice(&(MAX_WIDTH + 1).to_le_bytes());
         data.extend_from_slice(&1080u32.to_le_bytes());
         data.extend_from_slice(&1234u64.to_le_bytes());
-        
+
         let result = decoder.decode(&data);
         assert!(result.is_err());
     }
@@ -305,7 +318,7 @@ mod tests {
     #[test]
     fn test_decoder_random_noise() {
         let mut decoder = OpenH264Decoder::new().unwrap();
-        
+
         let mut data = Vec::new();
         data.extend_from_slice(&640u32.to_le_bytes());
         data.extend_from_slice(&480u32.to_le_bytes());
@@ -313,7 +326,7 @@ mod tests {
         for i in 0..100 {
             data.push(i as u8);
         }
-        
+
         let result = decoder.decode(&data);
         assert!(result.is_ok());
     }
@@ -338,17 +351,17 @@ mod tests {
     fn test_keyframe_request() {
         let mut encoder = OpenH264Encoder::new().unwrap();
         assert!(!encoder.pending_keyframe);
-        
+
         encoder.request_keyframe();
         assert!(encoder.pending_keyframe);
-        
+
         let frame = VideoFrame {
             data: vec![128; 640 * 480 * 3],
             width: 640,
             height: 480,
             timestamp: 0,
         };
-        
+
         let _ = encoder.encode(&frame).unwrap();
         assert!(!encoder.pending_keyframe);
     }
@@ -395,22 +408,22 @@ mod proptests {
         ) {
             let width = width.max(1).min(MAX_WIDTH);
             let height = height.max(1).min(MAX_HEIGHT);
-            
+
             let pixel_count = (width as usize)
                 .checked_mul(height as usize)
                 .and_then(|n| n.checked_mul(3));
-            
+
             if let Some(size) = pixel_count {
                 if size <= MAX_RGB_SIZE {
                     let data = vec![seed; size];
                     let frame = VideoFrame { data, width, height, timestamp };
-                    
+
                     let mut encoder = OpenH264Encoder::with_dimensions(width, height)?;
                     let mut decoder = OpenH264Decoder::new()?;
-                    
+
                     let compressed = encoder.encode(&frame)?;
                     let decoded = decoder.decode(&compressed)?;
-                    
+
                     prop_assert_eq!(decoded.width, width);
                     prop_assert_eq!(decoded.height, height);
                     prop_assert_eq!(decoded.timestamp, timestamp);
@@ -429,18 +442,18 @@ mod proptests {
         ) {
             let width = width.max(1).min(MAX_WIDTH);
             let height = height.max(1).min(MAX_HEIGHT);
-            
+
             let mut data = Vec::new();
             data.extend_from_slice(&width.to_le_bytes());
             data.extend_from_slice(&height.to_le_bytes());
             data.extend_from_slice(&timestamp.to_le_bytes());
-            
+
             let mut rng_val = seed;
             for _ in 0..data_len {
                 rng_val = rng_val.wrapping_mul(1103515245).wrapping_add(12345);
                 data.push((rng_val >> 16) as u8);
             }
-            
+
             if let Ok(mut decoder) = OpenH264Decoder::new() {
                 let _ = decoder.decode(&data);
             }
@@ -461,7 +474,7 @@ mod proptests {
                     height: frame_h,
                     timestamp: 0,
                 };
-                
+
                 let mut encoder = OpenH264Encoder::with_dimensions(cfg_w, cfg_h)?;
                 let result = encoder.encode(&frame);
                 prop_assert!(result.is_err());
@@ -480,11 +493,11 @@ mod proptests {
                 height,
                 timestamp: 0,
             };
-            
+
             let mut encoder = OpenH264Encoder::with_dimensions(width, height)?;
             encoder.request_keyframe();
             prop_assert!(encoder.pending_keyframe);
-            
+
             let _ = encoder.encode(&frame)?;
             prop_assert!(!encoder.pending_keyframe);
         }

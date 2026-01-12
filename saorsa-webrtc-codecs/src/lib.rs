@@ -4,6 +4,32 @@
 #![deny(unsafe_code)]
 
 //! Video and audio codec implementations
+//!
+//! # Implementation Status
+//!
+//! The current codec implementations are **stub/simulation implementations** designed for:
+//! - Development and testing without external codec libraries
+//! - API design validation and interface stabilization
+//! - Performance testing of the transport layer
+//!
+//! ## OpenH264 (Video)
+//! - **Current**: Simulation using compression (achieves ~25% size reduction for testing)
+//! - **Production**: Will integrate with real openh264 crate when `h264` feature is enabled
+//! - **Status**: Safe for development/testing, not for production video calls
+//!
+//! ## Opus (Audio)
+//! - **Current**: Simulation with frame size validation and format conversion
+//! - **Production**: Will integrate with real opus crate when `opus` feature is enabled
+//! - **Status**: Safe for development/testing, not for production audio calls
+//!
+//! ## Migration Path
+//!
+//! To use real codecs in production:
+//! 1. Enable the respective features: `features = ["h264", "opus"]`
+//! 2. Replace stub implementations in `openh264.rs` and `opus.rs`
+//! 3. Run integration tests with actual codec libraries
+//!
+//! The stub implementations maintain the same API surface, so migration is transparent to users.
 
 pub mod openh264;
 pub mod opus;
@@ -75,6 +101,4 @@ pub trait VideoDecoder: Send + Sync {
 }
 
 pub use openh264::{OpenH264Decoder, OpenH264Encoder};
-pub use opus::{
-    AudioFrame, Channels, OpusDecoder, OpusEncoder, OpusEncoderConfig, SampleRate,
-};
+pub use opus::{AudioFrame, Channels, OpusDecoder, OpusEncoder, OpusEncoderConfig, SampleRate};

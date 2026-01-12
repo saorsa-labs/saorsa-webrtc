@@ -36,10 +36,10 @@ impl StreamType {
     #[must_use]
     pub const fn priority(&self) -> u8 {
         match self {
-            Self::Audio => 1,       // Highest priority
+            Self::Audio => 1, // Highest priority
             Self::Video => 2,
             Self::ScreenShare => 3,
-            Self::Data => 4,        // Lowest priority
+            Self::Data => 4, // Lowest priority
         }
     }
 
@@ -92,7 +92,7 @@ impl RtpPacket {
         stream_type: StreamType,
     ) -> Result<Self> {
         const MAX_PAYLOAD_SIZE: usize = 1188; // 1200 - 12 byte RTP header
-        
+
         if payload.len() > MAX_PAYLOAD_SIZE {
             return Err(anyhow::anyhow!(
                 "Payload size {} exceeds maximum {}",
@@ -133,12 +133,12 @@ impl RtpPacket {
     /// Returns error if deserialization fails or data exceeds size limits
     pub fn from_bytes(data: &[u8]) -> Result<Self> {
         const MAX_PACKET_SIZE: usize = 1200;
-        
+
         // Validate input size before deserialization to prevent DoS
         if data.is_empty() {
             return Err(anyhow::anyhow!("Cannot deserialize empty data"));
         }
-        
+
         if data.len() > MAX_PACKET_SIZE {
             return Err(anyhow::anyhow!(
                 "Data size {} exceeds maximum packet size {}",
@@ -146,7 +146,7 @@ impl RtpPacket {
                 MAX_PACKET_SIZE
             ));
         }
-        
+
         // Deserialize with pre-validated size limit
         bincode::deserialize(data)
             .map_err(|e| anyhow::anyhow!("Failed to deserialize RTP packet: {}", e))
@@ -242,7 +242,10 @@ impl WebRtcQuicBridge {
 
     /// Create bridge with transport
     #[must_use]
-    pub fn with_transport(config: QuicBridgeConfig, transport: crate::transport::AntQuicTransport) -> Self {
+    pub fn with_transport(
+        config: QuicBridgeConfig,
+        transport: crate::transport::AntQuicTransport,
+    ) -> Self {
         Self {
             config,
             transport: Some(transport),
@@ -255,14 +258,23 @@ impl WebRtcQuicBridge {
     ///
     /// Returns error if sending fails
     pub async fn send_rtp_packet(&self, packet: &RtpPacket) -> Result<(), BridgeError> {
-        let transport = self.transport.as_ref()
+        let span = tracing::debug_span!(
+            "send_rtp_packet",
+            stream_type = ?packet.stream_type,
+            priority = packet.stream_type.priority(),
+            seq_num = packet.sequence_number
+        );
+        let _enter = span.enter();
+
+        let transport = self
+            .transport
+            .as_ref()
             .ok_or_else(|| BridgeError::ConfigError("No transport configured".to_string()))?;
 
-        // Serialize the packet
-        let data = packet.to_bytes()
+        let data = packet
+            .to_bytes()
             .map_err(|e| BridgeError::StreamError(format!("Failed to serialize packet: {}", e)))?;
 
-        // Validate size
         if data.len() > self.config.max_packet_size {
             return Err(BridgeError::StreamError(format!(
                 "Packet size {} exceeds maximum {}",
@@ -271,12 +283,13 @@ impl WebRtcQuicBridge {
             )));
         }
 
-        // Send over QUIC stream
-        transport.send_bytes(&data).await
+        transport
+            .send_bytes(&data)
+            .await
             .map_err(|e| BridgeError::StreamError(format!("Failed to send packet: {}", e)))?;
-        
+
         tracing::debug!("Sent RTP packet of size {} bytes", data.len());
-        
+
         Ok(())
     }
 
@@ -286,18 +299,29 @@ impl WebRtcQuicBridge {
     ///
     /// Returns error if receiving fails
     pub async fn receive_rtp_packet(&self) -> Result<RtpPacket, BridgeError> {
-        let transport = self.transport.as_ref()
+        let span = tracing::debug_span!("receive_rtp_packet");
+        let _enter = span.enter();
+
+        let transport = self
+            .transport
+            .as_ref()
             .ok_or_else(|| BridgeError::ConfigError("No transport configured".to_string()))?;
 
-        // Receive from QUIC stream
-        let data = transport.receive_bytes().await
+        let data = transport
+            .receive_bytes()
+            .await
             .map_err(|e| BridgeError::StreamError(format!("Failed to receive: {}", e)))?;
 
-        // Deserialize the packet (this also validates size limits)
-        let packet = RtpPacket::from_bytes(&data)
-            .map_err(|e| BridgeError::StreamError(format!("Failed to deserialize packet: {}", e)))?;
+        let packet = RtpPacket::from_bytes(&data).map_err(|e| {
+            BridgeError::StreamError(format!("Failed to deserialize packet: {}", e))
+        })?;
 
-        tracing::debug!("Received RTP packet of size {} bytes", data.len());
+        tracing::debug!(
+            "Received RTP packet of size {} bytes, stream_type={:?}, seq={}",
+            data.len(),
+            packet.stream_type,
+            packet.sequence_number
+        );
 
         Ok(packet)
     }
@@ -326,8 +350,15 @@ mod tests {
     #[tokio::test]
     async fn test_quic_bridge_send_rtp_packet() {
         let bridge = WebRtcQuicBridge::default();
-        let packet = RtpPacket::new(96, 1000, 12345, 0xDEADBEEF, vec![1, 2, 3, 4], StreamType::Audio)
-            .expect("Failed to create packet");
+        let packet = RtpPacket::new(
+            96,
+            1000,
+            12345,
+            0xDEADBEEF,
+            vec![1, 2, 3, 4],
+            StreamType::Audio,
+        )
+        .expect("Failed to create packet");
 
         // Will fail without transport, but that's expected
         let _result = bridge.send_rtp_packet(&packet).await;

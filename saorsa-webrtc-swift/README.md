@@ -2,6 +2,20 @@
 
 Swift bindings for the Saorsa WebRTC library, providing a native Swift API for iOS and macOS applications.
 
+## ⚠️ Production Readiness
+
+**Current Status: Mock Implementation**
+
+The Swift bindings currently use a **mock/stub implementation** for development and testing purposes. The bindings are production-ready in terms of API design and error handling, but the underlying WebRTC functionality uses simplified stubs.
+
+### Mock vs Real Modes
+
+- **Mock Mode (Current)**: Simulated call states and transitions, no real media processing
+- **Real Mode (Planned)**: Full WebRTC implementation with actual media capture and transmission
+
+**Use for**: Development, API integration, testing UI flows  
+**Not ready for**: Production video/audio calls
+
 ## Features
 
 - ✅ Type-safe Swift API
@@ -9,6 +23,7 @@ Swift bindings for the Saorsa WebRTC library, providing a native Swift API for i
 - ✅ Comprehensive error handling
 - ✅ Full test coverage
 - ✅ iOS 14+ and macOS 11+ support
+- ⚠️ Mock WebRTC implementation (real implementation pending)
 
 ## Installation
 
@@ -138,6 +153,29 @@ swift test
 - iOS 14.0+ / macOS 11.0+
 - Xcode 13.0+
 - Swift 5.9+
+
+## Switching Between Mock and Real Modes
+
+### Current Implementation
+
+The bindings currently link to the FFI layer which uses mock implementations. To verify the mode:
+
+```swift
+// All calls currently use mock implementation
+let service = try SaorsaWebRTC(identity: "test-identity")
+// This creates a mock service - no real WebRTC operations occur
+```
+
+### Future Real Mode (Planned)
+
+When real WebRTC implementation is integrated:
+
+1. The FFI layer will connect to actual WebRTC core
+2. No API changes required - same Swift interface
+3. Real media capture and transmission will occur
+4. Feature flag or build configuration may control mode selection
+
+**Migration Path**: When upgrading to real mode, existing code will work without modification. Only behavior changes from simulated to actual media processing.
 
 ## License
 

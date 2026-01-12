@@ -2,6 +2,20 @@
 
 Kotlin bindings for the Saorsa WebRTC library, providing a native Kotlin API for Android and JVM applications.
 
+## ⚠️ Production Readiness
+
+**Current Status: Mock Implementation**
+
+The Kotlin bindings currently use a **mock/stub implementation** for development and testing purposes. The bindings are production-ready in terms of API design and error handling, but the underlying WebRTC functionality uses simplified stubs.
+
+### Mock vs Real Modes
+
+- **Mock Mode (Current)**: Simulated call states and transitions, no real media processing
+- **Real Mode (Planned)**: Full WebRTC implementation with actual media capture and transmission
+
+**Use for**: Development, API integration, testing UI flows  
+**Not ready for**: Production video/audio calls
+
 ## Features
 
 - ✅ Idiomatic Kotlin API
@@ -10,6 +24,7 @@ Kotlin bindings for the Saorsa WebRTC library, providing a native Kotlin API for
 - ✅ Full test coverage
 - ✅ Android and JVM support
 - ✅ Uses JNA for native interop
+- ⚠️ Mock WebRTC implementation (real implementation pending)
 
 ## Installation
 
@@ -174,6 +189,44 @@ Run tests:
 - JVM 17+
 - Android API 24+ (for Android)
 - Kotlin 1.9+
+
+## Switching Between Mock and Real Modes
+
+### Current Implementation
+
+The bindings currently link to the FFI layer which uses mock implementations. To verify the mode:
+
+```kotlin
+// All calls currently use mock implementation
+SaorsaWebRTC("test-identity").use { service ->
+    // This creates a mock service - no real WebRTC operations occur
+    val callId = service.call("peer-identity")
+}
+```
+
+### Future Real Mode (Planned)
+
+When real WebRTC implementation is integrated:
+
+1. The FFI layer will connect to actual WebRTC core
+2. No API changes required - same Kotlin interface
+3. Real media capture and transmission will occur
+4. Feature flag or build configuration may control mode selection
+
+**Migration Path**: When upgrading to real mode, existing code will work without modification. Only behavior changes from simulated to actual media processing.
+
+### Conditional Behavior
+
+For apps that need to handle both modes:
+
+```kotlin
+// Future: Check mode at runtime
+val isMockMode = service.isMockMode() // Planned API
+if (isMockMode) {
+    // Show warning or limit features
+    println("Running in development/mock mode")
+}
+```
 
 ## License
 

@@ -82,6 +82,7 @@ pub struct QuicMediaStream {
 pub struct QuicMediaStreamManager {
     streams: std::collections::HashMap<u64, QuicMediaStream>,
     next_stream_id: u64,
+    transport: Option<std::sync::Arc<crate::transport::AntQuicTransport>>,
 }
 
 impl QuicMediaStreamManager {
@@ -91,7 +92,26 @@ impl QuicMediaStreamManager {
         Self {
             streams: std::collections::HashMap::new(),
             next_stream_id: 0,
+            transport: None,
         }
+    }
+
+    /// Create new stream manager with transport
+    #[must_use]
+    pub fn with_transport(
+        _qos: QoSParams,
+        transport: std::sync::Arc<crate::transport::AntQuicTransport>,
+    ) -> Self {
+        Self {
+            streams: std::collections::HashMap::new(),
+            next_stream_id: 0,
+            transport: Some(transport),
+        }
+    }
+
+    /// Set transport for the stream manager
+    pub fn set_transport(&mut self, transport: std::sync::Arc<crate::transport::AntQuicTransport>) {
+        self.transport = Some(transport);
     }
 
     /// Create a new media stream
@@ -144,13 +164,39 @@ impl QuicMediaStreamManager {
     /// # Errors
     ///
     /// Returns error if sending fails
-    pub async fn send_data(&self, stream_id: u64, _data: &[u8]) -> Result<(), StreamError> {
-        if self.streams.contains_key(&stream_id) {
-            // TODO: Implement actual QUIC stream sending
-            Ok(())
-        } else {
-            Err(StreamError::OperationError("Stream not found".to_string()))
-        }
+    pub async fn send_data(&self, stream_id: u64, data: &[u8]) -> Result<(), StreamError> {
+        let stream = self
+            .streams
+            .get(&stream_id)
+            .ok_or_else(|| StreamError::OperationError("Stream not found".to_string()))?;
+
+        let transport = self
+            .transport
+            .as_ref()
+            .ok_or_else(|| StreamError::ConfigError("No transport configured".to_string()))?;
+
+        let span = tracing::debug_span!(
+            "send_stream_data",
+            stream_id = stream_id,
+            stream_type = ?stream.stream_type,
+            priority = stream.qos_params.priority,
+            data_len = data.len()
+        );
+        let _enter = span.enter();
+
+        transport.send_bytes(data).await.map_err(|e| {
+            StreamError::OperationError(format!("Failed to send on stream {}: {}", stream_id, e))
+        })?;
+
+        tracing::debug!(
+            "Sent {} bytes on stream {} (type={:?}, priority={})",
+            data.len(),
+            stream_id,
+            stream.stream_type,
+            stream.qos_params.priority
+        );
+
+        Ok(())
     }
 
     /// Receive data from a stream
@@ -159,12 +205,37 @@ impl QuicMediaStreamManager {
     ///
     /// Returns error if receiving fails
     pub async fn receive_data(&self, stream_id: u64) -> Result<Vec<u8>, StreamError> {
-        if self.streams.contains_key(&stream_id) {
-            // TODO: Implement actual QUIC stream receiving
-            Err(StreamError::OperationError("Not implemented".to_string()))
-        } else {
-            Err(StreamError::OperationError("Stream not found".to_string()))
-        }
+        let stream = self
+            .streams
+            .get(&stream_id)
+            .ok_or_else(|| StreamError::OperationError("Stream not found".to_string()))?;
+
+        let transport = self
+            .transport
+            .as_ref()
+            .ok_or_else(|| StreamError::ConfigError("No transport configured".to_string()))?;
+
+        let span = tracing::debug_span!(
+            "receive_stream_data",
+            stream_id = stream_id,
+            stream_type = ?stream.stream_type,
+            priority = stream.qos_params.priority
+        );
+        let _enter = span.enter();
+
+        let data = transport.receive_bytes().await.map_err(|e| {
+            StreamError::OperationError(format!("Failed to receive on stream {}: {}", stream_id, e))
+        })?;
+
+        tracing::debug!(
+            "Received {} bytes on stream {} (type={:?}, priority={})",
+            data.len(),
+            stream_id,
+            stream.stream_type,
+            stream.qos_params.priority
+        );
+
+        Ok(data)
     }
 
     /// Get all active streams
@@ -233,7 +304,7 @@ mod tests {
 
         let data = vec![1, 2, 3, 4];
         let result = manager.send_data(stream_id, &data).await;
-        assert!(result.is_ok());
+        assert!(matches!(result, Err(StreamError::ConfigError(_))));
     }
 
     #[tokio::test]
@@ -252,7 +323,7 @@ mod tests {
         let stream_id = manager.create_stream(MediaStreamType::Audio).unwrap();
 
         let result = manager.receive_data(stream_id).await;
-        assert!(matches!(result, Err(StreamError::OperationError(_))));
+        assert!(matches!(result, Err(StreamError::ConfigError(_))));
     }
 
     #[test]

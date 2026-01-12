@@ -1,10 +1,10 @@
 //! Comprehensive call state machine tests
 
 use saorsa_webrtc_core::{
-    CallManager, CallManagerConfig,
     call::CallError,
-    types::{MediaConstraints, CallState, CallId},
     identity::PeerIdentityString,
+    types::{CallId, CallState, MediaConstraints},
+    CallManager, CallManagerConfig,
 };
 
 #[tokio::test]
@@ -14,7 +14,10 @@ async fn state_transition_calling_to_connected() {
         .unwrap();
     let callee = PeerIdentityString::new("callee");
     let constraints = MediaConstraints::audio_only();
-    let id = mgr.initiate_call(callee, constraints.clone()).await.unwrap();
+    let id = mgr
+        .initiate_call(callee, constraints.clone())
+        .await
+        .unwrap();
 
     mgr.accept_call(id, constraints).await.unwrap();
     assert_eq!(mgr.get_call_state(id).await, Some(CallState::Connected));

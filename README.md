@@ -10,9 +10,9 @@ A WebRTC implementation over ant-quic transport with pluggable signaling mechani
 
 `saorsa-webrtc` provides a WebRTC implementation that uses **ant-quic as the transport layer** instead of traditional ICE/STUN/TURN protocols. This approach leverages QUIC's built-in NAT traversal, post-quantum cryptography, and multiplexing capabilities while maintaining WebRTC's media streaming features.
 
-### **Latest Release: v0.2.0** 🚀
+### **Latest Release: v0.2.1** 🚀
 
-Major enhancement with CLI interface, codec support, and multi-platform bindings!
+Production readiness improvements with security hardening, QUIC data path implementation, and comprehensive observability!
 
 ## Key Features
 
@@ -100,19 +100,19 @@ saorsa --help
 ### **Library Packages**
 ```toml
 # Core library
-saorsa-webrtc-core = "0.2.0"
+saorsa-webrtc-core = "0.2.1"
 
-# Codec support
-saorsa-webrtc-codecs = "0.2.0"
+# Codec support (stub implementations for development)
+saorsa-webrtc-codecs = "0.2.1"
 
 # CLI interface
-saorsa-webrtc-cli = "0.2.0"
+saorsa-webrtc-cli = "0.2.1"
 
 # Mobile bindings (iOS/Android)
-saorsa-webrtc-ffi = "0.2.0"
+saorsa-webrtc-ffi = "0.2.1"
 
 # Desktop integration (Tauri)
-saorsa-webrtc-tauri = "0.2.0"
+saorsa-webrtc-tauri = "0.2.1"
 ```
 
 ## Usage
@@ -357,15 +357,20 @@ saorsa-webrtc/
 - ✅ Type-safe data structures
 - ✅ Module organization and workspace structure
 - ✅ CLI interface with terminal UI
-- ✅ OpenH264 codec implementation with compression
+- ✅ Codec simulation stubs for development (OpenH264/Opus)
 - ✅ FFI bindings for mobile platforms
-- ✅ Tauri plugin for desktop integration
-- ✅ Compilation verified (zero errors, minimal warnings)
+- ✅ Tauri plugin integrated with core library
+- ✅ QUIC media data path implementation
+- ✅ Security hardening (DoS protection, size limits, graceful shutdown)
+- ✅ Comprehensive observability with structured tracing
+- ✅ Strict clippy policy enforcement (panic/unwrap/expect forbidden)
+- ✅ Compilation verified (zero errors, zero warnings)
 
 **In Progress**:
-- Real OpenH264 integration (currently using compression stubs)
+- Real OpenH264/Opus integration (currently using simulation stubs - see codec documentation)
 - Sixel video display in terminal
 - Integration testing with communitas gossip network
+- End-to-end integration tests with ant-quic loopback
 
 **Planned**:
 - Performance benchmarks
@@ -379,7 +384,9 @@ This is part of the Saorsa project ecosystem. For contribution guidelines, see t
 
 ## License
 
-[License information to be added]
+This project is licensed under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0).
+
+Copyright (C) 2024 Saorsa Labs Limited and David Irvine
 
 ## Related Projects
 

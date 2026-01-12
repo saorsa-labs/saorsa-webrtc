@@ -7,12 +7,12 @@
 
 mod types;
 
-use std::ffi::c_char;
-use std::sync::Arc;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
+use std::ffi::c_char;
+use std::sync::Arc;
 use std::sync::Mutex;
-pub use types::{CallState, SaorsaResult, c_char_to_string, string_to_c_char};
+pub use types::{c_char_to_string, string_to_c_char, CallState, SaorsaResult};
 
 /// Global runtime for async operations
 #[allow(dead_code)]
@@ -21,22 +21,24 @@ static RUNTIME: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
         .enable_all()
         .build()
         .map_or_else(
-            |_| tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .ok()
-                .unwrap_or_else(|| {
-                    // Last resort: create minimal runtime
-                    tokio::runtime::Runtime::new().ok().unwrap_or_else(|| {
-                        std::process::abort()
+            |_| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .ok()
+                    .unwrap_or_else(|| {
+                        // Last resort: create minimal runtime
+                        tokio::runtime::Runtime::new()
+                            .ok()
+                            .unwrap_or_else(|| std::process::abort())
                     })
-                }),
-            |rt| rt
+            },
+            |rt| rt,
         )
 });
 
 /// Global handle storage
-static HANDLES: Lazy<Mutex<HashMap<usize, Arc<SaorsaHandle>>>> = 
+static HANDLES: Lazy<Mutex<HashMap<usize, Arc<SaorsaHandle>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// Handle counter
@@ -56,7 +58,7 @@ impl SaorsaHandle {
 }
 
 /// Initialize the library with an identity
-/// 
+///
 /// # Safety
 /// `identity` must be a valid null-terminated C string
 /// Returns a handle pointer, or null on error
@@ -67,10 +69,10 @@ pub extern "C" fn saorsa_init(identity: *const c_char) -> *mut std::ffi::c_void 
         Some(s) if !s.is_empty() => s,
         _ => return std::ptr::null_mut(),
     };
-    
+
     // Create handle
     let handle = Arc::new(SaorsaHandle::new(identity_str));
-    
+
     // Get next handle ID
     let handle_id = match HANDLE_COUNTER.lock() {
         Ok(mut counter) => {
@@ -80,7 +82,7 @@ pub extern "C" fn saorsa_init(identity: *const c_char) -> *mut std::ffi::c_void 
         }
         Err(_) => return std::ptr::null_mut(),
     };
-    
+
     // Store handle
     match HANDLES.lock() {
         Ok(mut handles) => {
@@ -92,28 +94,25 @@ pub extern "C" fn saorsa_init(identity: *const c_char) -> *mut std::ffi::c_void 
 }
 
 /// Start a call to a peer
-/// 
+///
 /// # Safety
 /// `handle` must be a valid handle from `saorsa_init`
 /// `peer` must be a valid null-terminated C string
 /// Returns a call ID as a C string (caller must free), or null on error
 #[no_mangle]
-pub extern "C" fn saorsa_call(
-    handle: *mut std::ffi::c_void,
-    peer: *const c_char,
-) -> *mut c_char {
+pub extern "C" fn saorsa_call(handle: *mut std::ffi::c_void, peer: *const c_char) -> *mut c_char {
     // Validate inputs
     if handle.is_null() {
         return std::ptr::null_mut();
     }
-    
+
     let peer_str = match unsafe { c_char_to_string(peer) } {
         Some(s) if !s.is_empty() => s,
         _ => return std::ptr::null_mut(),
     };
-    
+
     let handle_id = handle as usize;
-    
+
     // Get handle
     let _handle = match HANDLES.lock() {
         Ok(handles) => match handles.get(&handle_id) {
@@ -122,7 +121,7 @@ pub extern "C" fn saorsa_call(
         },
         Err(_) => return std::ptr::null_mut(),
     };
-    
+
     // In a full implementation, would initiate actual call
     // For now, return a mock call ID
     let call_id = format!("call-{}-{}", handle_id, peer_str);
@@ -130,7 +129,7 @@ pub extern "C" fn saorsa_call(
 }
 
 /// Get the current state of a call
-/// 
+///
 /// # Safety
 /// `handle` must be a valid handle from `saorsa_init`
 /// `call_id` must be a valid null-terminated C string from `saorsa_call`
@@ -142,13 +141,13 @@ pub extern "C" fn saorsa_call_state(
     if handle.is_null() {
         return CallState::Failed;
     }
-    
+
     // In a full implementation, would look up actual call state
     CallState::Active
 }
 
 /// End a call
-/// 
+///
 /// # Safety
 /// `handle` must be a valid handle from `saorsa_init`
 /// `call_id` must be a valid null-terminated C string from `saorsa_call`
@@ -160,13 +159,13 @@ pub extern "C" fn saorsa_end_call(
     if handle.is_null() {
         return SaorsaResult::InvalidParameter;
     }
-    
+
     // In a full implementation, would end the actual call
     SaorsaResult::Success
 }
 
 /// Free a string returned by the library
-/// 
+///
 /// # Safety
 /// `str_ptr` must be a string previously returned by this library
 /// After calling this, `str_ptr` is invalid and must not be used
@@ -180,7 +179,7 @@ pub extern "C" fn saorsa_free_string(str_ptr: *mut c_char) {
 }
 
 /// Free library resources
-/// 
+///
 /// # Safety
 /// `handle` must be a valid handle from `saorsa_init`
 /// After calling this, `handle` is invalid and must not be used
@@ -189,9 +188,9 @@ pub extern "C" fn saorsa_free(handle: *mut std::ffi::c_void) {
     if handle.is_null() {
         return;
     }
-    
+
     let handle_id = handle as usize;
-    
+
     // Remove handle
     if let Ok(mut handles) = HANDLES.lock() {
         handles.remove(&handle_id);
@@ -204,13 +203,17 @@ mod tests {
 
     #[test]
     fn test_init_with_valid_identity() {
-        let identity = std::ffi::CString::new("test-identity").ok().map(|s| s.into_raw());
+        let identity = std::ffi::CString::new("test-identity")
+            .ok()
+            .map(|s| s.into_raw());
         if let Some(id_ptr) = identity {
             let handle = saorsa_init(id_ptr);
             assert!(!handle.is_null());
-            
+
             saorsa_free(handle);
-            unsafe { let _ = std::ffi::CString::from_raw(id_ptr); }
+            unsafe {
+                let _ = std::ffi::CString::from_raw(id_ptr);
+            }
         }
     }
 
@@ -226,18 +229,22 @@ mod tests {
         if let Some(id_ptr) = identity {
             let handle = saorsa_init(id_ptr);
             assert!(!handle.is_null());
-            
+
             let peer = std::ffi::CString::new("bob").ok().map(|s| s.into_raw());
             if let Some(peer_ptr) = peer {
                 let call_id = saorsa_call(handle, peer_ptr);
                 assert!(!call_id.is_null());
-                
+
                 saorsa_free_string(call_id);
-                unsafe { let _ = std::ffi::CString::from_raw(peer_ptr); }
+                unsafe {
+                    let _ = std::ffi::CString::from_raw(peer_ptr);
+                }
             }
-            
+
             saorsa_free(handle);
-            unsafe { let _ = std::ffi::CString::from_raw(id_ptr); }
+            unsafe {
+                let _ = std::ffi::CString::from_raw(id_ptr);
+            }
         }
     }
 
@@ -247,7 +254,9 @@ mod tests {
         if let Some(peer_ptr) = peer {
             let call_id = saorsa_call(std::ptr::null_mut(), peer_ptr);
             assert!(call_id.is_null());
-            unsafe { let _ = std::ffi::CString::from_raw(peer_ptr); }
+            unsafe {
+                let _ = std::ffi::CString::from_raw(peer_ptr);
+            }
         }
     }
 
@@ -256,20 +265,24 @@ mod tests {
         let identity = std::ffi::CString::new("alice").ok().map(|s| s.into_raw());
         if let Some(id_ptr) = identity {
             let handle = saorsa_init(id_ptr);
-            
+
             let peer = std::ffi::CString::new("bob").ok().map(|s| s.into_raw());
             if let Some(peer_ptr) = peer {
                 let call_id = saorsa_call(handle, peer_ptr);
-                
+
                 let state = saorsa_call_state(handle, call_id);
                 assert_eq!(state, CallState::Active);
-                
+
                 saorsa_free_string(call_id);
-                unsafe { let _ = std::ffi::CString::from_raw(peer_ptr); }
+                unsafe {
+                    let _ = std::ffi::CString::from_raw(peer_ptr);
+                }
             }
-            
+
             saorsa_free(handle);
-            unsafe { let _ = std::ffi::CString::from_raw(id_ptr); }
+            unsafe {
+                let _ = std::ffi::CString::from_raw(id_ptr);
+            }
         }
     }
 
@@ -278,20 +291,24 @@ mod tests {
         let identity = std::ffi::CString::new("alice").ok().map(|s| s.into_raw());
         if let Some(id_ptr) = identity {
             let handle = saorsa_init(id_ptr);
-            
+
             let peer = std::ffi::CString::new("bob").ok().map(|s| s.into_raw());
             if let Some(peer_ptr) = peer {
                 let call_id = saorsa_call(handle, peer_ptr);
-                
+
                 let result = saorsa_end_call(handle, call_id);
                 assert_eq!(result, SaorsaResult::Success);
-                
+
                 saorsa_free_string(call_id);
-                unsafe { let _ = std::ffi::CString::from_raw(peer_ptr); }
+                unsafe {
+                    let _ = std::ffi::CString::from_raw(peer_ptr);
+                }
             }
-            
+
             saorsa_free(handle);
-            unsafe { let _ = std::ffi::CString::from_raw(id_ptr); }
+            unsafe {
+                let _ = std::ffi::CString::from_raw(id_ptr);
+            }
         }
     }
 
@@ -302,7 +319,9 @@ mod tests {
             let handle = saorsa_init(id_ptr);
             saorsa_free(handle);
             saorsa_free(handle); // Should not crash
-            unsafe { let _ = std::ffi::CString::from_raw(id_ptr); }
+            unsafe {
+                let _ = std::ffi::CString::from_raw(id_ptr);
+            }
         }
     }
 }
