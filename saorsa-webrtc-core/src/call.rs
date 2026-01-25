@@ -78,6 +78,18 @@ pub struct Call<I: PeerIdentity> {
 }
 
 /// Call manager
+///
+/// Manages call lifecycle for both legacy WebRTC and QUIC-native calls.
+/// The generic parameter `I` represents the peer identity type, allowing
+/// type-safe handling of different identity schemes (e.g., string IDs,
+/// cryptographic identities).
+///
+/// # Type Safety
+///
+/// All methods preserve the `I: PeerIdentity` type parameter, ensuring:
+/// - Call events include properly typed peer identities
+/// - Remote peer information is type-safe throughout call lifecycle
+/// - No accidental mixing of different identity schemes
 pub struct CallManager<I: PeerIdentity> {
     calls: Arc<RwLock<HashMap<CallId, Call<I>>>>,
     event_sender: broadcast::Sender<CallEvent<I>>,
@@ -1188,5 +1200,49 @@ mod tests {
             CallState::Ending,
             CallState::Connected
         ));
+    }
+
+    /// Test that verifies PeerIdentity type safety is preserved across all methods
+    #[tokio::test]
+    async fn test_peer_identity_type_safety() {
+        let config = CallManagerConfig::default();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
+
+        // Subscribe to events - should receive CallEvent<PeerIdentityString>
+        let mut event_rx = call_manager.subscribe_events();
+
+        let callee = PeerIdentityString::new("typed-callee");
+        let constraints = MediaConstraints::audio_only();
+        let peer = test_peer();
+
+        // Initiate QUIC call - callee is typed as PeerIdentityString
+        let call_id = call_manager
+            .initiate_quic_call(callee.clone(), constraints, peer)
+            .await
+            .unwrap();
+
+        // Receive event - should be properly typed
+        let event = event_rx.try_recv();
+        assert!(event.is_ok());
+
+        // Verify event contains the correctly typed callee identity
+        match event {
+            Ok(CallEvent::CallInitiated {
+                callee: event_callee,
+                ..
+            }) => {
+                // This line compiles because event_callee is PeerIdentityString
+                assert_eq!(event_callee.to_string_repr(), callee.to_string_repr());
+            }
+            other => {
+                // Test assertion - use unreachable since tests are allowed panics
+                unreachable!("Expected CallInitiated event, got: {:?}", other);
+            }
+        }
+
+        // End call cleanly
+        call_manager.end_call(call_id).await.unwrap();
     }
 }
