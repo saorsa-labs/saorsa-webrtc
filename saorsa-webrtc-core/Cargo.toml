@@ -1,6 +1,6 @@
 [package]
 name = "saorsa-webrtc-core"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 authors = ["Saorsa Labs Limited <saorsalabs@gmail.com>", "David Irvine <david@maidsafe.com>"]
 license = "AGPL-3.0"
@@ -82,7 +82,7 @@ rtcp = "0.13"
 rtp = "0.13"
 
 # Codec support (new)
-saorsa-webrtc-codecs = { version = "0.2.1", path = "../saorsa-webrtc-codecs" }
+saorsa-webrtc-codecs = { version = "0.3.0", path = "../saorsa-webrtc-codecs" }
 
 # Utilities
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

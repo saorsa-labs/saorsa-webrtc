@@ -7,7 +7,7 @@ license.workspace = true
 description = "Tauri plugin for Saorsa WebRTC"
 
 [dependencies]
-saorsa-webrtc-core = { version = "0.2.1", path = "../saorsa-webrtc-core" }
+saorsa-webrtc-core = { version = "0.3.0", path = "../saorsa-webrtc-core" }
 tauri = { version = "1.5", features = ["api-all"] }
 serde.workspace = true
 serde_json.workspace = true

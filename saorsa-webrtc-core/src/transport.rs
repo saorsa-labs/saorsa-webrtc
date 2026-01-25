@@ -162,7 +162,7 @@ impl AntQuicTransport {
     ///
     /// # Returns
     ///
-    /// Reference to the Arc<Node> if connected, None if not started
+    /// Reference to the `Arc<Node>` if connected, `None` if not started
     ///
     /// # Note
     ///

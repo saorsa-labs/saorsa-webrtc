@@ -11,8 +11,8 @@ name = "saorsa"
 path = "src/main.rs"
 
 [dependencies]
-saorsa-webrtc-core = { version = "0.2.1", path = "../saorsa-webrtc-core" }
-saorsa-webrtc-codecs = { version = "0.2.1", path = "../saorsa-webrtc-codecs" }
+saorsa-webrtc-core = { version = "0.3.0", path = "../saorsa-webrtc-core" }
+saorsa-webrtc-codecs = { version = "0.3.0", path = "../saorsa-webrtc-codecs" }
 tokio.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
