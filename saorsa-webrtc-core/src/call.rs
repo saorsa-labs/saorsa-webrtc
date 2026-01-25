@@ -322,7 +322,21 @@ impl<I: PeerIdentity> CallManager<I> {
             }
             drop(media_manager);
 
-            // Close the peer connection
+            // Disconnect QuicMediaTransport if present (Phase 3 path)
+            if let Some(ref transport) = call.media_transport {
+                if let Err(e) = transport.disconnect().await {
+                    tracing::warn!(
+                        "Failed to disconnect QuicMediaTransport for call {}: {}",
+                        call_id,
+                        e
+                    );
+                    // Continue cleanup even if disconnect fails
+                } else {
+                    tracing::debug!("QuicMediaTransport disconnected for call {}", call_id);
+                }
+            }
+
+            // Close the peer connection (legacy path)
             let _ = call.peer_connection.close().await;
 
             // Emit call ended event
@@ -918,5 +932,59 @@ mod tests {
             .await;
 
         assert!(matches!(result, Err(CallError::CallNotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn test_end_call_with_quic_transport() {
+        let config = CallManagerConfig::default();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
+
+        let callee = PeerIdentityString::new("quic-callee");
+        let constraints = MediaConstraints::audio_only();
+        let peer = test_peer();
+
+        // Create a QUIC call (has connected transport)
+        let call_id = call_manager
+            .initiate_quic_call(callee, constraints, peer)
+            .await
+            .unwrap();
+
+        // Verify transport is present
+        assert!(call_manager.has_media_transport(call_id).await);
+
+        // End the call - should disconnect both transport and peer connection
+        let result = call_manager.end_call(call_id).await;
+        assert!(result.is_ok());
+
+        // Verify call is removed
+        let state = call_manager.get_call_state(call_id).await;
+        assert_eq!(state, None);
+    }
+
+    #[tokio::test]
+    async fn test_end_call_with_legacy_transport() {
+        let config = CallManagerConfig::default();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
+
+        let callee = PeerIdentityString::new("legacy-callee");
+        let constraints = MediaConstraints::audio_only();
+
+        // Create a legacy call (has unconnected transport)
+        let call_id = call_manager
+            .initiate_call(callee, constraints)
+            .await
+            .unwrap();
+
+        // End the call - should handle both transport paths gracefully
+        let result = call_manager.end_call(call_id).await;
+        assert!(result.is_ok());
+
+        // Verify call is removed
+        let state = call_manager.get_call_state(call_id).await;
+        assert_eq!(state, None);
     }
 }
