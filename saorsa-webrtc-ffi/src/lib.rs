@@ -20,21 +20,15 @@ static RUNTIME: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .map_or_else(
-            |_| {
-                tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .ok()
-                    .unwrap_or_else(|| {
-                        // Last resort: create minimal runtime
-                        tokio::runtime::Runtime::new()
-                            .ok()
-                            .unwrap_or_else(|| std::process::abort())
-                    })
-            },
-            |rt| rt,
-        )
+        .unwrap_or_else(|_| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap_or_else(|_| {
+                    // Last resort: create minimal runtime
+                    tokio::runtime::Runtime::new().unwrap_or_else(|_| std::process::abort())
+                })
+        })
 });
 
 /// Global handle storage

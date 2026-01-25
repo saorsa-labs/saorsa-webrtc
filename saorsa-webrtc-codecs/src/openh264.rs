@@ -343,7 +343,7 @@ mod tests {
         };
 
         let compressed = encoder.encode(&frame).unwrap();
-        assert!(compressed.len() > 0);
+        assert!(!compressed.is_empty());
         assert!(compressed.len() < frame.data.len());
     }
 
@@ -406,8 +406,8 @@ mod proptests {
             timestamp in any::<u64>(),
             seed in 0u8..=255,
         ) {
-            let width = width.max(1).min(MAX_WIDTH);
-            let height = height.max(1).min(MAX_HEIGHT);
+            let width = width.clamp(1, MAX_WIDTH);
+            let height = height.clamp(1, MAX_HEIGHT);
 
             let pixel_count = (width as usize)
                 .checked_mul(height as usize)
@@ -440,8 +440,8 @@ mod proptests {
             data_len in 0usize..=1000,
             seed in any::<u64>(),
         ) {
-            let width = width.max(1).min(MAX_WIDTH);
-            let height = height.max(1).min(MAX_HEIGHT);
+            let width = width.clamp(1, MAX_WIDTH);
+            let height = height.clamp(1, MAX_HEIGHT);
 
             let mut data = Vec::new();
             data.extend_from_slice(&width.to_le_bytes());

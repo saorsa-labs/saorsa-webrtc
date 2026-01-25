@@ -6,7 +6,6 @@ use rand::Rng;
 use saorsa_webrtc_core::prelude::*;
 use std::sync::Arc;
 use terminal_ui::{CliDisplayMode, TerminalUI};
-use tracing_subscriber;
 
 mod terminal_ui;
 #[cfg(test)]

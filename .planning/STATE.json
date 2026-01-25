@@ -3,25 +3,25 @@
   "project": "unified-quic-media-transport",
   "active": true,
   "milestone": {
-    "number": 1,
-    "name": "Dependency Upgrade & Foundation",
+    "number": 2,
+    "name": "Transport Unification",
     "phases_total": 3,
-    "phases_complete": 3
+    "phases_complete": 0
   },
   "phase": {
-    "number": "1.3",
-    "name": "Feature Flag Infrastructure",
-    "plan": "PLAN-phase-1.3.md",
-    "status": "completed"
+    "number": "2.1",
+    "name": "QuicMediaTransport Implementation",
+    "plan": "PLAN-phase-2.1.md",
+    "status": "in_progress"
   },
   "progress": {
-    "total_tasks": 6,
-    "completed_tasks": 6,
-    "current_task": null
+    "total_tasks": 7,
+    "completed_tasks": 2,
+    "current_task": "Task 3: Add length-prefix framing for RTP packets"
   },
-  "status": "completed",
-  "milestone_status": "READY_FOR_PHASE_2",
-  "last_updated": "2026-01-25T14:55:00Z",
-  "last_action": "milestone_1_fixes_applied",
-  "notes": "Critical Codex findings addressed: LinkTransport implemented with stream type framing, comprehensive tests added, zero warnings."
+  "status": "in_progress",
+  "milestone_status": "EXECUTING_PHASE_2.1",
+  "last_updated": "2026-01-25T15:05:00Z",
+  "last_action": "task_2_completed_23_tests_pass",
+  "notes": "Task 1: QuicMediaTransport struct - COMPLETE (Codex Grade A). Task 2: Dedicated streams - COMPLETE (9 new tests pass, 23 total). Next: Add RTP framing."
 }

@@ -1,0 +1,4 @@
+# GSD Activity Log
+# Format: [timestamp] ACTION: details
+[2026-01-25T11:04:53Z] INIT: Project initialized | Name: saorsa-webrtc
+[2026-01-25T11:49:10Z] DESIGN: Project designed | Milestones: 4 | Phases: 13 | Target: v0.3.0

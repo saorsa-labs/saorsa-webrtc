@@ -884,3 +884,252 @@ mod stream_tests {
         assert!(types.contains(&StreamType::Video));
     }
 }
+
+/// RTP packet framing utilities for QUIC streams
+pub mod framing {
+
+    /// Frame an RTP packet with 2-byte length prefix (big-endian u16)
+    ///
+    /// # Arguments
+    ///
+    /// * `packet` - The RTP packet bytes to frame
+    ///
+    /// # Returns
+    ///
+    /// A vector with 2-byte length prefix followed by packet data
+    ///
+    /// # Errors
+    ///
+    /// Returns error if packet is too large (> 65535 bytes)
+    pub fn frame_rtp(packet: &[u8]) -> Result<Vec<u8>, String> {
+        if packet.len() > u16::MAX as usize {
+            return Err(format!("RTP packet too large: {} bytes", packet.len()));
+        }
+
+        let mut framed = Vec::with_capacity(2 + packet.len());
+        framed.extend_from_slice(&(packet.len() as u16).to_be_bytes());
+        framed.extend_from_slice(packet);
+        Ok(framed)
+    }
+
+    /// Unframe an RTP packet, extracting length prefix and validating
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The framed data (length prefix + packet)
+    ///
+    /// # Returns
+    ///
+    /// A tuple of (expected_length, remaining_data) or error
+    ///
+    /// # Errors
+    ///
+    /// Returns error if frame is too small or length mismatches
+    pub fn unframe_rtp(data: &[u8]) -> Result<(u16, &[u8]), String> {
+        if data.len() < 2 {
+            return Err(format!("Frame too small: {} bytes (need >= 2)", data.len()));
+        }
+
+        // Parse length prefix from first 2 bytes
+        let len_bytes = &data[0..2];
+        let expected_len = u16::from_be_bytes([len_bytes[0], len_bytes[1]]);
+
+        let packet_data = &data[2..];
+        
+        if packet_data.len() < expected_len as usize {
+            return Err(format!(
+                "Incomplete packet: {} bytes (expected {})",
+                packet_data.len(),
+                expected_len
+            ));
+        }
+
+        Ok((expected_len, packet_data))
+    }
+
+    /// Split a buffer into complete frames
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The data buffer containing one or more frames
+    ///
+    /// # Returns
+    ///
+    /// A vector of (frame_data, remaining_data) or error
+    pub fn split_frames(data: &[u8]) -> Result<Vec<&[u8]>, String> {
+        let mut frames = Vec::new();
+        let mut offset = 0;
+
+        while offset < data.len() {
+            if offset + 2 > data.len() {
+                return Err("Incomplete length header".to_string());
+            }
+
+            let len_bytes = &data[offset..offset + 2];
+            let frame_len = u16::from_be_bytes([len_bytes[0], len_bytes[1]]) as usize;
+            
+            let frame_start = offset + 2;
+            let frame_end = frame_start + frame_len;
+
+            if frame_end > data.len() {
+                return Err(format!("Incomplete frame: {} bytes (expected {})", 
+                    data.len() - frame_start, frame_len));
+            }
+
+            frames.push(&data[frame_start..frame_end]);
+            offset = frame_end;
+        }
+
+        Ok(frames)
+    }
+
+    #[cfg(test)]
+    mod framing_tests {
+        use super::*;
+
+        #[test]
+        fn test_frame_rtp_empty() {
+            let packet = &[];
+            let framed = frame_rtp(packet).unwrap();
+            assert_eq!(framed.len(), 2);
+            assert_eq!(framed[0..2], [0, 0]);
+        }
+
+        #[test]
+        fn test_frame_rtp_small() {
+            let packet = &[0x80, 0x60, 0x00, 0x01];
+            let framed = frame_rtp(packet).unwrap();
+            assert_eq!(framed.len(), 6);
+            assert_eq!(framed[0..2], [0, 4]); // length = 4
+            assert_eq!(&framed[2..], packet);
+        }
+
+        #[test]
+        fn test_frame_rtp_large() {
+            let packet = vec![0x42; 1000];
+            let framed = frame_rtp(&packet).unwrap();
+            assert_eq!(framed.len(), 1002);
+            assert_eq!(framed[0..2], [3, 232]); // 1000 in big-endian
+        }
+
+        #[test]
+        fn test_frame_rtp_max_size() {
+            let packet = vec![0x42; 65535];
+            let framed = frame_rtp(&packet).unwrap();
+            assert_eq!(framed.len(), 65537);
+            assert_eq!(framed[0..2], [255, 255]);
+        }
+
+        #[test]
+        fn test_frame_rtp_too_large() {
+            let packet = vec![0x42; 65536];
+            let result = frame_rtp(&packet);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn test_unframe_rtp_empty_frame() {
+            let data = &[0, 0];
+            let (len, packet) = unframe_rtp(data).unwrap();
+            assert_eq!(len, 0);
+            assert!(packet.is_empty());
+        }
+
+        #[test]
+        fn test_unframe_rtp_valid() {
+            let data = &[0, 4, 0x80, 0x60, 0x00, 0x01];
+            let (len, packet) = unframe_rtp(data).unwrap();
+            assert_eq!(len, 4);
+            assert_eq!(packet, &[0x80, 0x60, 0x00, 0x01]);
+        }
+
+        #[test]
+        fn test_unframe_rtp_too_small() {
+            let data = &[0];
+            let result = unframe_rtp(data);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn test_unframe_rtp_incomplete_packet() {
+            let data = &[0, 4, 0x80, 0x60]; // Says 4 bytes but only 2
+            let result = unframe_rtp(data);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn test_roundtrip_frame_unframe() {
+            let original = &[0x80, 0x60, 0x00, 0x01, 0xAA, 0xBB, 0xCC, 0xDD];
+            let framed = frame_rtp(original).unwrap();
+            let (len, packet) = unframe_rtp(&framed).unwrap();
+            
+            assert_eq!(len as usize, original.len());
+            assert_eq!(packet, original);
+        }
+
+        #[test]
+        fn test_split_frames_single() {
+            let packet = &[0x80, 0x60, 0x00, 0x01];
+            let framed = frame_rtp(packet).unwrap();
+            
+            let frames = split_frames(&framed).unwrap();
+            assert_eq!(frames.len(), 1);
+            assert_eq!(frames[0], packet);
+        }
+
+        #[test]
+        fn test_split_frames_multiple() {
+            let packet1 = &[0x80, 0x60];
+            let packet2 = &[0x81, 0x61, 0xAA, 0xBB];
+            
+            let mut combined = Vec::new();
+            combined.extend_from_slice(&frame_rtp(packet1).unwrap());
+            combined.extend_from_slice(&frame_rtp(packet2).unwrap());
+            
+            let frames = split_frames(&combined).unwrap();
+            assert_eq!(frames.len(), 2);
+            assert_eq!(frames[0], packet1);
+            assert_eq!(frames[1], packet2);
+        }
+
+        #[test]
+        fn test_split_frames_incomplete() {
+            let packet = &[0x80, 0x60];
+            let framed = frame_rtp(packet).unwrap();
+            
+            let incomplete = &framed[0..3]; // Missing 1 byte of payload
+            let result = split_frames(incomplete);
+            assert!(result.is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod rtp_tests {
+    use super::framing::*;
+
+    #[test]
+    fn test_rtp_framing_integration() {
+        // Simulate multiple RTP packets
+        let packets = vec![
+            vec![0x80, 0x60, 0x00, 0x01, 0xAA, 0xBB],
+            vec![0x80, 0x61, 0x00, 0x02, 0xCC, 0xDD, 0xEE],
+            vec![0x80, 0x62],
+        ];
+
+        // Frame each packet
+        let mut framed_data = Vec::new();
+        for packet in &packets {
+            framed_data.extend_from_slice(&frame_rtp(packet).unwrap());
+        }
+
+        // Split back into frames
+        let frames = split_frames(&framed_data).unwrap();
+        assert_eq!(frames.len(), packets.len());
+
+        // Verify each frame matches
+        for (i, frame) in frames.iter().enumerate() {
+            assert_eq!(*frame, packets[i].as_slice());
+        }
+    }
+}

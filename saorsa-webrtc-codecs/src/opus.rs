@@ -388,7 +388,7 @@ mod tests {
         data.push(1); // Mono
         data.extend_from_slice(&1000u64.to_le_bytes()); // Timestamp
         data.extend_from_slice(&100u32.to_le_bytes()); // Length
-        data.extend_from_slice(&vec![0u8; 200]); // Data
+        data.extend_from_slice(&[0u8; 200]); // Data
 
         assert!(decoder.decode(&data).is_err());
     }
@@ -402,7 +402,7 @@ mod tests {
         data.push(5); // Invalid channel count
         data.extend_from_slice(&1000u64.to_le_bytes());
         data.extend_from_slice(&100u32.to_le_bytes());
-        data.extend_from_slice(&vec![0u8; 200]);
+        data.extend_from_slice(&[0u8; 200]);
 
         assert!(decoder.decode(&data).is_err());
     }
