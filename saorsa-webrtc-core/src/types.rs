@@ -1,6 +1,7 @@
 //! WebRTC types and data structures
 
 use crate::identity::PeerIdentity;
+use crate::quic_media_transport::MediaTransportState;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -170,6 +171,48 @@ pub enum CallState {
     Ending,
     /// Call failed
     Failed,
+}
+
+impl CallState {
+    /// Convert from `MediaTransportState` to `CallState`
+    ///
+    /// Maps QUIC transport states to call states:
+    /// - `Disconnected` -> `Idle` (initial/reset state)
+    /// - `Connecting` -> `Connecting`
+    /// - `Connected` -> `Connected`
+    /// - `Failed` -> `Failed`
+    #[must_use]
+    pub fn from_transport_state(transport_state: MediaTransportState) -> Self {
+        match transport_state {
+            MediaTransportState::Disconnected => CallState::Idle,
+            MediaTransportState::Connecting => CallState::Connecting,
+            MediaTransportState::Connected => CallState::Connected,
+            MediaTransportState::Failed => CallState::Failed,
+        }
+    }
+
+    /// Convert from `MediaTransportState` with call ending context
+    ///
+    /// Similar to `from_transport_state`, but returns `Ending` instead of
+    /// `Idle` when the transport is disconnected, suitable for cleanup scenarios.
+    #[must_use]
+    pub fn from_transport_state_ending(transport_state: MediaTransportState) -> Self {
+        match transport_state {
+            MediaTransportState::Disconnected => CallState::Ending,
+            MediaTransportState::Connecting => CallState::Connecting,
+            MediaTransportState::Connected => CallState::Connected,
+            MediaTransportState::Failed => CallState::Failed,
+        }
+    }
+}
+
+/// Map `MediaTransportState` to `CallState`
+///
+/// Convenience function for converting transport states to call states.
+/// Use this for initial state mapping during call setup.
+#[must_use]
+pub fn call_state_from_transport(transport_state: MediaTransportState) -> CallState {
+    CallState::from_transport_state(transport_state)
 }
 
 /// Call quality metrics
@@ -556,5 +599,68 @@ mod tests {
         let hd1080 = VideoResolution::HD1080;
         assert_eq!(hd1080.width(), 1920);
         assert_eq!(hd1080.height(), 1080);
+    }
+
+    #[test]
+    fn test_call_state_from_transport_state() {
+        // Disconnected -> Idle
+        assert_eq!(
+            CallState::from_transport_state(MediaTransportState::Disconnected),
+            CallState::Idle
+        );
+
+        // Connecting -> Connecting
+        assert_eq!(
+            CallState::from_transport_state(MediaTransportState::Connecting),
+            CallState::Connecting
+        );
+
+        // Connected -> Connected
+        assert_eq!(
+            CallState::from_transport_state(MediaTransportState::Connected),
+            CallState::Connected
+        );
+
+        // Failed -> Failed
+        assert_eq!(
+            CallState::from_transport_state(MediaTransportState::Failed),
+            CallState::Failed
+        );
+    }
+
+    #[test]
+    fn test_call_state_from_transport_state_ending() {
+        // Disconnected -> Ending (when ending context)
+        assert_eq!(
+            CallState::from_transport_state_ending(MediaTransportState::Disconnected),
+            CallState::Ending
+        );
+
+        // Other states map the same
+        assert_eq!(
+            CallState::from_transport_state_ending(MediaTransportState::Connecting),
+            CallState::Connecting
+        );
+        assert_eq!(
+            CallState::from_transport_state_ending(MediaTransportState::Connected),
+            CallState::Connected
+        );
+        assert_eq!(
+            CallState::from_transport_state_ending(MediaTransportState::Failed),
+            CallState::Failed
+        );
+    }
+
+    #[test]
+    fn test_call_state_from_transport_helper() {
+        // Convenience function matches method
+        assert_eq!(
+            call_state_from_transport(MediaTransportState::Connected),
+            CallState::Connected
+        );
+        assert_eq!(
+            call_state_from_transport(MediaTransportState::Disconnected),
+            CallState::Idle
+        );
     }
 }
