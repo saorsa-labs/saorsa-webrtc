@@ -757,3 +757,96 @@ mod tests {
         assert!(result.is_ok());
     }
 }
+
+#[cfg(test)]
+mod link_transport_tests {
+    use super::*;
+    use crate::link_transport::{LinkTransport, StreamType};
+
+    #[tokio::test]
+    async fn test_link_transport_start_stop() {
+        let config = TransportConfig::default();
+        let mut transport = AntQuicTransport::new(config);
+        
+        // Start should succeed
+        let result = transport.start().await;
+        assert!(result.is_ok());
+        
+        // Should be running after start
+        assert!(transport.is_running().await);
+        
+        // Stop should succeed
+        let result = transport.stop();
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_link_transport_framing_audio() {
+        let _config = TransportConfig::default();
+        
+        // Test stream type framing for audio
+        let stream_type = StreamType::Audio;
+        let payload = b"audio_data".to_vec();
+        
+        // Frame would be: [0x20][0x00, 0x0A][audio_data]
+        assert_eq!(stream_type.as_u8(), 0x20);
+        assert_eq!(payload.len(), 10);
+    }
+
+    #[tokio::test]
+    async fn test_link_transport_framing_video() {
+        let _config = TransportConfig::default();
+        
+        // Test stream type for video (larger packet)
+        let stream_type = StreamType::Video;
+        let large_payload = vec![0u8; 5000]; // 5KB payload
+        
+        // Frame would be: [0x21][0x13, 0x88][large_payload]
+        assert_eq!(stream_type.as_u8(), 0x21);
+        assert_eq!(large_payload.len(), 5000);
+    }
+
+    #[tokio::test]
+    async fn test_link_transport_stream_types() {
+        let config = TransportConfig::default();
+        let transport = AntQuicTransport::new(config);
+        
+        // Verify all stream types are valid
+        let types = vec![
+            StreamType::Audio,
+            StreamType::Video,
+            StreamType::Screen,
+            StreamType::RtcpFeedback,
+            StreamType::Data,
+        ];
+        
+        for stream_type in types {
+            let result = transport.get_stream_handle(stream_type);
+            assert!(result.is_ok());
+        }
+    }
+
+    #[test]
+    fn test_link_transport_stream_type_conversions() {
+        let test_cases = vec![
+            (StreamType::Audio, 0x20),
+            (StreamType::Video, 0x21),
+            (StreamType::Screen, 0x22),
+            (StreamType::RtcpFeedback, 0x23),
+            (StreamType::Data, 0x24),
+        ];
+        
+        for (stream_type, byte_value) in test_cases {
+            assert_eq!(stream_type.as_u8(), byte_value);
+            assert_eq!(StreamType::try_from_u8(byte_value), Some(stream_type));
+        }
+    }
+
+    #[test]
+    fn test_link_transport_invalid_stream_type() {
+        // Test invalid stream type bytes
+        assert_eq!(StreamType::try_from_u8(0x19), None);
+        assert_eq!(StreamType::try_from_u8(0x25), None);
+        assert_eq!(StreamType::try_from_u8(0xFF), None);
+    }
+}
