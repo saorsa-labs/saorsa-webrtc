@@ -4,7 +4,9 @@ version.workspace = true
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Video and audio codecs for Saorsa WebRTC"
+documentation = "https://docs.rs/saorsa-webrtc-codecs"
 
 [dependencies]
 # Video codecs

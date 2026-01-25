@@ -3,9 +3,11 @@
 //! Implements the `ProtocolHandler` trait from saorsa-transport to handle
 //! WebRTC-specific stream types over the shared transport layer.
 
+use ant_quic::{
+    LinkError as TransportError, LinkResult as TransportResult, PeerId, ProtocolHandler, StreamType,
+};
 use async_trait::async_trait;
 use bytes::Bytes;
-use ant_quic::{PeerId, ProtocolHandler, StreamType, LinkResult as TransportResult, LinkError as TransportError};
 use std::collections::HashMap;
 use thiserror::Error;
 use tokio::sync::{mpsc, RwLock};
@@ -159,10 +161,7 @@ impl WebRtcProtocolHandler {
 
         // Deserialize the signaling message
         let message: SignalingMessage = serde_json::from_slice(&data).map_err(|e| {
-            TransportError::Internal(format!(
-                "Failed to deserialize signaling message: {}",
-                e
-            ))
+            TransportError::Internal(format!("Failed to deserialize signaling message: {}", e))
         })?;
 
         debug!(
@@ -184,10 +183,7 @@ impl WebRtcProtocolHandler {
             .send(WebRtcIncoming::Signal { peer, message })
             .await
             .map_err(|e| {
-                TransportError::Internal(format!(
-                    "Failed to send to signal channel: {}",
-                    e
-                ))
+                TransportError::Internal(format!("Failed to send to signal channel: {}", e))
             })?;
 
         // Signaling typically expects a response, but we handle that asynchronously
@@ -200,10 +196,7 @@ impl WebRtcProtocolHandler {
 
         // Deserialize the RTP packet
         let packet = RtpPacket::from_bytes(&data).map_err(|e| {
-            TransportError::Internal(format!(
-                "Failed to deserialize RTP packet: {}",
-                e
-            ))
+            TransportError::Internal(format!("Failed to deserialize RTP packet: {}", e))
         })?;
 
         trace!(
@@ -280,10 +273,7 @@ impl WebRtcProtocolHandler {
             })
             .await
             .map_err(|e| {
-                TransportError::Internal(format!(
-                    "Failed to send to data channel: {}",
-                    e
-                ))
+                TransportError::Internal(format!("Failed to send to data channel: {}", e))
             })?;
 
         // Data channel messages may or may not require responses
