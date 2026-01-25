@@ -9,8 +9,28 @@ repository = "https://github.com/dirvine/saorsa-webrtc"
 description = "Core WebRTC implementation over ant-quic transport"
 
 [features]
-default = []
+# QUIC-native transport (default) - uses ant-quic for all media
+quic-native = []
+
+# Legacy WebRTC support (optional) - includes traditional webrtc crate
+# Allows fallback to ICE/DTLS/SRTP for compatibility
+legacy-webrtc = [
+    "webrtc",
+    "webrtc-ice",
+    "webrtc-media",
+    "webrtc-sctp",
+    "webrtc-srtp",
+    "webrtc-dtls",
+    "webrtc-data",
+    "interceptor",
+]
+
+# Test utilities feature
 test-utils = []
+
+# Default features: Include legacy-webrtc support (for compatibility)
+# Phase 2 will allow omitting legacy-webrtc when QuicMediaTransport is ready
+default = ["quic-native", "legacy-webrtc"]
 
 [dependencies]
 # Core async and serialization
@@ -43,17 +63,21 @@ once_cell = "1.19"
 saorsa-transport = { path = "../../saorsa-transport" }
 
 # Networking - ant-quic as primary transport
-ant-quic = { version = "0.10.3", features = ["pqc"] }
+ant-quic = { version = "0.20", default-features = false }
 
-# WebRTC dependencies
-webrtc = "0.13"
-webrtc-ice = "0.13"
-webrtc-media = "0.10"
-webrtc-sctp = "0.12"
-webrtc-srtp = "0.15"
-webrtc-dtls = "0.12"
-webrtc-data = "0.11"
-interceptor = "0.14"
+# WebRTC dependencies (gated by legacy-webrtc feature, which is included by default)
+# These are used for the legacy signaling path. In Phase 2, when QuicMediaTransport
+# is fully implemented, these can be removed for QUIC-native-only builds.
+webrtc = { version = "0.13", optional = true }
+webrtc-ice = { version = "0.13", optional = true }
+webrtc-media = { version = "0.10", optional = true }
+webrtc-sctp = { version = "0.12", optional = true }
+webrtc-srtp = { version = "0.15", optional = true }
+webrtc-dtls = { version = "0.12", optional = true }
+webrtc-data = { version = "0.11", optional = true }
+interceptor = { version = "0.14", optional = true }
+
+# RTP/RTCP packet parsing (always included - no transport dependency)
 rtcp = "0.13"
 rtp = "0.13"
 

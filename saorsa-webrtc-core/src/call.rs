@@ -1,4 +1,7 @@
 //! Call management for WebRTC
+//!
+//! **Note:** This module uses the webrtc crate types (requires legacy-webrtc feature).
+//! In Phase 2, this will be replaced with a QUIC-native implementation via QuicMediaTransport.
 
 use crate::identity::PeerIdentity;
 use crate::media::{MediaStreamManager, WebRtcTrack};
@@ -448,6 +451,7 @@ impl<I: PeerIdentity> CallManager<I> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::identity::PeerIdentityString;

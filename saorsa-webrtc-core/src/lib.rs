@@ -54,13 +54,16 @@
 /// Core WebRTC types and data structures
 pub mod types;
 
-/// WebRTC service and configuration
+/// WebRTC service and configuration (requires legacy-webrtc feature)
+#[cfg(feature = "legacy-webrtc")]
 pub mod service;
 
-/// Media stream management
+/// Media stream management (requires legacy-webrtc feature)
+#[cfg(feature = "legacy-webrtc")]
 pub mod media;
 
-/// Call management and state
+/// Call management and state (requires legacy-webrtc feature)
+#[cfg(feature = "legacy-webrtc")]
 pub mod call;
 
 /// Signaling protocol and handlers
@@ -85,9 +88,11 @@ pub mod identity;
 pub mod link_transport;
 
 // Re-export main types at crate root
+#[cfg(feature = "legacy-webrtc")]
 pub use call::{CallManager, CallManagerConfig};
 pub use identity::{PeerIdentity, PeerIdentityString};
 pub use link_transport::{LinkTransport, LinkTransportError, PeerConnection, StreamType as LinkStreamType};
+#[cfg(feature = "legacy-webrtc")]
 pub use media::{
     AudioDevice, AudioTrack, MediaEvent, MediaStream, MediaStreamManager, VideoDevice, VideoTrack,
 };
@@ -105,10 +110,13 @@ pub use types::*;
 
 /// Prelude module for convenient imports
 pub mod prelude {
+    #[cfg(feature = "legacy-webrtc")]
     pub use crate::call::{CallManager, CallManagerConfig};
     pub use crate::identity::{PeerIdentity, PeerIdentityString};
+    #[cfg(feature = "legacy-webrtc")]
     pub use crate::media::{MediaEvent, MediaStreamManager};
     pub use crate::protocol_handler::{WebRtcHandlerConfig, WebRtcIncoming, WebRtcProtocolHandler};
+    #[cfg(feature = "legacy-webrtc")]
     pub use crate::service::{WebRtcConfig, WebRtcEvent, WebRtcService, WebRtcServiceBuilder};
     pub use crate::signaling::{SignalingHandler, SignalingMessage, SignalingTransport};
     pub use crate::transport::{AntQuicTransport, TransportConfig};

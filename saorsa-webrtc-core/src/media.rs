@@ -1,6 +1,9 @@
 //! Media stream management for WebRTC
 //!
 //! This module handles audio, video, and screen share media streams.
+//!
+//! **Note:** This module uses types from the webrtc crate (requires legacy-webrtc feature).
+//! In Phase 2, this will be replaced with a QUIC-backed media stream implementation.
 
 use crate::types::MediaType;
 use saorsa_webrtc_codecs::{
@@ -412,6 +415,7 @@ impl Default for MediaStreamManager {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

@@ -1,4 +1,7 @@
 //! WebRTC service orchestration
+//!
+//! **Note:** This module requires the `legacy-webrtc` feature. In Phase 2,
+//! a QUIC-native variant will be available.
 
 use crate::call::{CallManager, CallManagerConfig};
 use crate::identity::PeerIdentity;
