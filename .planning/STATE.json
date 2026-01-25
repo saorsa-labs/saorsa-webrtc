@@ -6,12 +6,6 @@
     "number": 1,
     "name": "Dependency Upgrade & Foundation",
     "phases_total": 3,
-    "phases_complete": 0
-  },
-  "milestone": {
-    "number": 1,
-    "name": "Dependency Upgrade & Foundation",
-    "phases_total": 3,
     "phases_complete": 3
   },
   "phase": {
@@ -26,6 +20,8 @@
     "current_task": null
   },
   "status": "completed",
-  "last_updated": "2026-01-25T14:20:00Z",
-  "last_action": "milestone_1_complete"
+  "milestone_status": "READY_FOR_PHASE_2",
+  "last_updated": "2026-01-25T14:55:00Z",
+  "last_action": "milestone_1_fixes_applied",
+  "notes": "Critical Codex findings addressed: LinkTransport implemented with stream type framing, comprehensive tests added, zero warnings."
 }
