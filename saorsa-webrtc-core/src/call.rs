@@ -6,7 +6,7 @@
 use crate::identity::PeerIdentity;
 use crate::link_transport::PeerConnection;
 use crate::media::{MediaStreamManager, WebRtcTrack};
-use crate::quic_media_transport::{MediaTransportError, QuicMediaTransport};
+use crate::quic_media_transport::{MediaTransportError, MediaTransportState, QuicMediaTransport};
 use crate::types::{CallEvent, CallId, CallState, MediaConstraints};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -619,6 +619,105 @@ impl<I: PeerIdentity> CallManager<I> {
         tracing::info!("QuicMediaTransport connected for call {}", call_id);
         Ok(())
     }
+
+    /// Update call state based on QuicMediaTransport state
+    ///
+    /// Synchronizes the call's `CallState` with the underlying transport state.
+    /// This should be called when transport state changes are detected.
+    ///
+    /// # State Transitions
+    ///
+    /// - `Disconnected` transport: Maps to `Idle` (or `Ending` if call was active)
+    /// - `Connecting` transport: Maps to `Connecting`
+    /// - `Connected` transport: Maps to `Connected`
+    /// - `Failed` transport: Maps to `Failed`
+    ///
+    /// # Arguments
+    ///
+    /// * `call_id` - The call to update
+    ///
+    /// # Errors
+    ///
+    /// Returns error if call not found or has no media transport.
+    pub async fn update_state_from_transport(&self, call_id: CallId) -> Result<CallState, CallError> {
+        let mut calls = self.calls.write().await;
+        let call = calls
+            .get_mut(&call_id)
+            .ok_or_else(|| CallError::CallNotFound(call_id.to_string()))?;
+
+        let transport = call
+            .media_transport
+            .as_ref()
+            .ok_or_else(|| CallError::ConfigError("Call has no media transport".to_string()))?;
+
+        let transport_state = transport.state().await;
+        let old_state = call.state;
+
+        // Map transport state to call state, using ending context if appropriate
+        let new_state = if old_state == CallState::Connected
+            && transport_state == MediaTransportState::Disconnected
+        {
+            // Connected call that disconnected -> Ending
+            CallState::Ending
+        } else {
+            CallState::from_transport_state(transport_state)
+        };
+
+        if old_state != new_state {
+            call.state = new_state;
+            tracing::debug!(
+                call_id = %call_id,
+                old_state = ?old_state,
+                new_state = ?new_state,
+                transport_state = ?transport_state,
+                "Call state updated from transport"
+            );
+
+            // Emit appropriate event based on transition
+            match new_state {
+                CallState::Connected => {
+                    let _ = self
+                        .event_sender
+                        .send(CallEvent::ConnectionEstablished { call_id });
+                }
+                CallState::Failed => {
+                    let _ = self.event_sender.send(CallEvent::ConnectionFailed {
+                        call_id,
+                        error: "Transport failed".to_string(),
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        Ok(new_state)
+    }
+
+    /// Check if a call state transition is valid for QUIC flow
+    ///
+    /// Validates that the proposed state transition follows the QUIC call
+    /// state machine rules.
+    #[must_use]
+    pub fn is_valid_quic_transition(from: CallState, to: CallState) -> bool {
+        matches!(
+            (from, to),
+            // Starting a call
+            (CallState::Idle, CallState::Calling)
+                | (CallState::Idle, CallState::Connecting) // Direct QUIC connect
+                // Progressing through call setup
+                | (CallState::Calling, CallState::Connecting)
+                | (CallState::Connecting, CallState::Connected)
+                // Ending a call
+                | (CallState::Connected, CallState::Ending)
+                | (CallState::Ending, CallState::Idle)
+                // Failures can happen from any active state
+                | (CallState::Calling, CallState::Failed)
+                | (CallState::Connecting, CallState::Failed)
+                | (CallState::Connected, CallState::Failed)
+                // Recovery from failure
+                | (CallState::Failed, CallState::Idle)
+        )
+    }
 }
 
 #[cfg(test)]
@@ -986,5 +1085,108 @@ mod tests {
         // Verify call is removed
         let state = call_manager.get_call_state(call_id).await;
         assert_eq!(state, None);
+    }
+
+    #[tokio::test]
+    async fn test_update_state_from_transport() {
+        let config = CallManagerConfig::default();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
+
+        let callee = PeerIdentityString::new("callee");
+        let constraints = MediaConstraints::audio_only();
+        let peer = test_peer();
+
+        // Create a QUIC call (starts in Connecting since transport connects immediately)
+        let call_id = call_manager
+            .initiate_quic_call(callee, constraints, peer)
+            .await
+            .unwrap();
+
+        // Transport is connected, update should reflect Connected state
+        let new_state = call_manager.update_state_from_transport(call_id).await;
+        assert!(new_state.is_ok());
+        assert_eq!(new_state.unwrap(), CallState::Connected);
+
+        // Verify the call state was actually updated
+        let state = call_manager.get_call_state(call_id).await;
+        assert_eq!(state, Some(CallState::Connected));
+    }
+
+    #[tokio::test]
+    async fn test_update_state_from_transport_not_found() {
+        let config = CallManagerConfig::default();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
+
+        let fake_call_id = CallId::new();
+        let result = call_manager.update_state_from_transport(fake_call_id).await;
+
+        assert!(matches!(result, Err(CallError::CallNotFound(_))));
+    }
+
+    #[test]
+    fn test_valid_quic_transitions() {
+        // Valid transitions
+        assert!(CallManager::<PeerIdentityString>::is_valid_quic_transition(
+            CallState::Idle,
+            CallState::Calling
+        ));
+        assert!(CallManager::<PeerIdentityString>::is_valid_quic_transition(
+            CallState::Idle,
+            CallState::Connecting
+        ));
+        assert!(CallManager::<PeerIdentityString>::is_valid_quic_transition(
+            CallState::Calling,
+            CallState::Connecting
+        ));
+        assert!(CallManager::<PeerIdentityString>::is_valid_quic_transition(
+            CallState::Connecting,
+            CallState::Connected
+        ));
+        assert!(CallManager::<PeerIdentityString>::is_valid_quic_transition(
+            CallState::Connected,
+            CallState::Ending
+        ));
+        assert!(CallManager::<PeerIdentityString>::is_valid_quic_transition(
+            CallState::Ending,
+            CallState::Idle
+        ));
+
+        // Failure transitions
+        assert!(CallManager::<PeerIdentityString>::is_valid_quic_transition(
+            CallState::Calling,
+            CallState::Failed
+        ));
+        assert!(CallManager::<PeerIdentityString>::is_valid_quic_transition(
+            CallState::Connecting,
+            CallState::Failed
+        ));
+        assert!(CallManager::<PeerIdentityString>::is_valid_quic_transition(
+            CallState::Connected,
+            CallState::Failed
+        ));
+
+        // Recovery
+        assert!(CallManager::<PeerIdentityString>::is_valid_quic_transition(
+            CallState::Failed,
+            CallState::Idle
+        ));
+
+        // Invalid transitions
+        assert!(!CallManager::<PeerIdentityString>::is_valid_quic_transition(
+            CallState::Idle,
+            CallState::Connected
+        ));
+        assert!(!CallManager::<PeerIdentityString>::is_valid_quic_transition(
+            CallState::Connected,
+            CallState::Calling
+        ));
+        assert!(!CallManager::<PeerIdentityString>::is_valid_quic_transition(
+            CallState::Ending,
+            CallState::Connected
+        ));
     }
 }
