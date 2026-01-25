@@ -3,7 +3,7 @@
 use saorsa_webrtc_core::signaling::SignalingMessage;
 use saorsa_webrtc_core::{
     CallId, CallManager, CallManagerConfig, CallState, MediaConstraints, MediaStreamManager,
-    MediaType, PeerIdentityString, SignalingHandler, SignalingTransport,
+    MediaType, PeerIdentity, PeerIdentityString, SignalingHandler, SignalingTransport,
 };
 use std::sync::Arc;
 
@@ -317,4 +317,283 @@ async fn test_media_constraints_validation() {
     assert_eq!(screen_types.len(), 2);
     assert!(screen_types.contains(&MediaType::Audio));
     assert!(screen_types.contains(&MediaType::ScreenShare));
+}
+
+// ============================================================================
+// QUIC-NATIVE CALL FLOW INTEGRATION TESTS
+// ============================================================================
+
+/// Helper to create a test PeerConnection
+fn test_peer() -> saorsa_webrtc_core::link_transport::PeerConnection {
+    saorsa_webrtc_core::link_transport::PeerConnection {
+        peer_id: "test-peer".to_string(),
+        remote_addr: "127.0.0.1:9000".parse().unwrap(),
+    }
+}
+
+use saorsa_webrtc_core::types::MediaCapabilities;
+use saorsa_webrtc_core::CallEvent;
+
+/// Test the full QUIC-native call flow: initiate → exchange → confirm → end
+#[tokio::test]
+async fn test_quic_native_call_flow_full() {
+    let config = CallManagerConfig::default();
+    let call_manager = CallManager::<PeerIdentityString>::new(config)
+        .await
+        .unwrap();
+
+    // Subscribe to events
+    let mut event_rx = call_manager.subscribe_events();
+
+    let callee = PeerIdentityString::new("quic-callee");
+    let constraints = MediaConstraints::audio_only();
+    let peer = test_peer();
+
+    // Step 1: Initiate QUIC call
+    let call_id = call_manager
+        .initiate_quic_call(callee.clone(), constraints.clone(), peer)
+        .await
+        .unwrap();
+
+    // Verify CallInitiated event
+    let event = event_rx.try_recv().unwrap();
+    match event {
+        CallEvent::CallInitiated {
+            call_id: eid,
+            callee: ecallee,
+            ..
+        } => {
+            assert_eq!(eid, call_id);
+            assert_eq!(ecallee.to_string_repr(), callee.to_string_repr());
+        }
+        other => panic!("Expected CallInitiated, got: {:?}", other),
+    }
+
+    // Verify state is Connecting (QUIC calls start in Connecting)
+    let state = call_manager.get_call_state(call_id).await;
+    assert_eq!(state, Some(CallState::Connecting));
+
+    // Step 2: Confirm connection with matching capabilities
+    let peer_caps = MediaCapabilities::audio_only();
+    call_manager
+        .confirm_connection(call_id, peer_caps)
+        .await
+        .unwrap();
+
+    // Verify ConnectionEstablished event
+    let event = event_rx.try_recv().unwrap();
+    match event {
+        CallEvent::ConnectionEstablished { call_id: eid } => {
+            assert_eq!(eid, call_id);
+        }
+        other => panic!("Expected ConnectionEstablished, got: {:?}", other),
+    }
+
+    // Verify state is Connected
+    let state = call_manager.get_call_state(call_id).await;
+    assert_eq!(state, Some(CallState::Connected));
+
+    // Step 3: End call
+    call_manager.end_call(call_id).await.unwrap();
+
+    // Verify CallEnded event
+    let event = event_rx.try_recv().unwrap();
+    match event {
+        CallEvent::CallEnded { call_id: eid } => {
+            assert_eq!(eid, call_id);
+        }
+        other => panic!("Expected CallEnded, got: {:?}", other),
+    }
+
+    // Verify call removed
+    let state = call_manager.get_call_state(call_id).await;
+    assert_eq!(state, None);
+}
+
+/// Test capability exchange flow (for non-QUIC-initiated calls)
+#[tokio::test]
+async fn test_quic_native_capability_exchange_flow() {
+    let config = CallManagerConfig::default();
+    let call_manager = CallManager::<PeerIdentityString>::new(config)
+        .await
+        .unwrap();
+
+    let callee = PeerIdentityString::new("callee");
+    let constraints = MediaConstraints::video_call();
+
+    // Initiate regular call (starts in Calling state)
+    let call_id = call_manager
+        .initiate_call(callee, constraints.clone())
+        .await
+        .unwrap();
+
+    // Verify initial state is Calling
+    let state = call_manager.get_call_state(call_id).await;
+    assert_eq!(state, Some(CallState::Calling));
+
+    // Exchange capabilities
+    let caps = call_manager.exchange_capabilities(call_id).await.unwrap();
+
+    // Verify capabilities match constraints
+    assert!(caps.audio);
+    assert!(caps.video);
+    assert_eq!(caps.max_bandwidth_kbps, 2500); // Video calls get higher bandwidth
+
+    // Verify state transitioned to Connecting
+    let state = call_manager.get_call_state(call_id).await;
+    assert_eq!(state, Some(CallState::Connecting));
+}
+
+/// Test call failure handling
+#[tokio::test]
+async fn test_quic_native_call_failure() {
+    let config = CallManagerConfig::default();
+    let call_manager = CallManager::<PeerIdentityString>::new(config)
+        .await
+        .unwrap();
+
+    let mut event_rx = call_manager.subscribe_events();
+
+    let callee = PeerIdentityString::new("callee");
+    let constraints = MediaConstraints::audio_only();
+    let peer = test_peer();
+
+    // Initiate QUIC call
+    let call_id = call_manager
+        .initiate_quic_call(callee, constraints, peer)
+        .await
+        .unwrap();
+
+    // Drain CallInitiated event
+    let _ = event_rx.try_recv();
+
+    // Fail the call
+    call_manager
+        .fail_call(call_id, "Network timeout".to_string())
+        .await
+        .unwrap();
+
+    // Verify ConnectionFailed event
+    let event = event_rx.try_recv().unwrap();
+    match event {
+        CallEvent::ConnectionFailed {
+            call_id: eid,
+            error,
+        } => {
+            assert_eq!(eid, call_id);
+            assert_eq!(error, "Network timeout");
+        }
+        other => panic!("Expected ConnectionFailed, got: {:?}", other),
+    }
+
+    // Verify state is Failed
+    let state = call_manager.get_call_state(call_id).await;
+    assert_eq!(state, Some(CallState::Failed));
+}
+
+/// Test capability mismatch rejection
+#[tokio::test]
+async fn test_quic_native_capability_mismatch() {
+    let config = CallManagerConfig::default();
+    let call_manager = CallManager::<PeerIdentityString>::new(config)
+        .await
+        .unwrap();
+
+    let callee = PeerIdentityString::new("callee");
+    let constraints = MediaConstraints::video_call(); // Requires video
+    let peer = test_peer();
+
+    // Initiate QUIC call
+    let call_id = call_manager
+        .initiate_quic_call(callee, constraints, peer)
+        .await
+        .unwrap();
+
+    // Try to confirm with audio-only capabilities (missing video)
+    let peer_caps = MediaCapabilities::audio_only();
+    let result = call_manager.confirm_connection(call_id, peer_caps).await;
+
+    // Should fail due to capability mismatch
+    assert!(result.is_err());
+
+    // Verify state is still Connecting (not Failed)
+    let state = call_manager.get_call_state(call_id).await;
+    assert_eq!(state, Some(CallState::Connecting));
+}
+
+/// Test get_call_info helper
+#[tokio::test]
+async fn test_quic_native_call_info() {
+    let config = CallManagerConfig::default();
+    let call_manager = CallManager::<PeerIdentityString>::new(config)
+        .await
+        .unwrap();
+
+    let callee = PeerIdentityString::new("callee");
+    let constraints = MediaConstraints::screen_share();
+    let peer = test_peer();
+
+    let call_id = call_manager
+        .initiate_quic_call(callee, constraints.clone(), peer)
+        .await
+        .unwrap();
+
+    // Get call info
+    let info = call_manager.get_call_info(call_id).await;
+    assert!(info.is_some());
+
+    let (state, info_constraints, has_transport) = info.unwrap();
+
+    // Verify info
+    assert_eq!(state, CallState::Connecting);
+    assert!(info_constraints.screen_share);
+    assert!(has_transport); // QUIC calls have media transport
+}
+
+/// Test SignalingMessage QUIC-native variants
+#[tokio::test]
+async fn test_signaling_message_quic_variants() {
+    use saorsa_webrtc_core::signaling::SignalingMessage;
+
+    // Test CapabilityExchange
+    let cap_exchange = SignalingMessage::CapabilityExchange {
+        session_id: "sess-1".to_string(),
+        audio: true,
+        video: false,
+        data_channel: true,
+        max_bandwidth_kbps: 1000,
+        quic_endpoint: Some("192.168.1.1:4433".parse().unwrap()),
+    };
+
+    assert!(cap_exchange.is_quic_native());
+    assert!(!cap_exchange.is_legacy_webrtc());
+    assert_eq!(cap_exchange.session_id(), "sess-1");
+
+    // Test serialization roundtrip
+    let json = serde_json::to_string(&cap_exchange).unwrap();
+    assert!(json.contains("capability_exchange"));
+
+    let deserialized: SignalingMessage = serde_json::from_str(&json).unwrap();
+    assert_eq!(deserialized, cap_exchange);
+
+    // Test ConnectionConfirm
+    let confirm = SignalingMessage::ConnectionConfirm {
+        session_id: "sess-1".to_string(),
+        audio: true,
+        video: false,
+        data_channel: true,
+        max_bandwidth_kbps: 1000,
+        quic_endpoint: None,
+    };
+
+    assert!(confirm.is_quic_native());
+    assert_eq!(confirm.session_id(), "sess-1");
+
+    // Test ConnectionReady
+    let ready = SignalingMessage::ConnectionReady {
+        session_id: "sess-1".to_string(),
+    };
+
+    assert!(ready.is_quic_native());
+    assert_eq!(ready.session_id(), "sess-1");
 }
