@@ -5,7 +5,7 @@
 
 use crate::identity::PeerIdentity;
 use crate::link_transport::PeerConnection;
-use crate::media::{MediaStreamManager, WebRtcTrack};
+use crate::media::{GenericTrack, MediaStreamManager, WebRtcTrack};
 use crate::quic_media_transport::{MediaTransportError, MediaTransportState, QuicMediaTransport};
 use crate::types::{CallEvent, CallId, CallState, MediaCapabilities, MediaConstraints};
 use serde::{Deserialize, Serialize};
@@ -60,6 +60,9 @@ impl Default for CallManagerConfig {
 pub trait NetworkAdapter: Send + Sync {}
 
 /// Active call with WebRTC peer connection
+///
+/// Supports both legacy WebRTC tracks and QUIC-native generic tracks.
+/// For new QUIC calls, use `quic_tracks` instead of `tracks`.
 pub struct Call<I: PeerIdentity> {
     /// Call identifier
     pub id: CallId,
@@ -73,8 +76,62 @@ pub struct Call<I: PeerIdentity> {
     pub state: CallState,
     /// Media constraints
     pub constraints: MediaConstraints,
-    /// WebRTC tracks for this call
+    /// WebRTC tracks for this call (legacy)
     pub tracks: Vec<WebRtcTrack>,
+    /// QUIC-backed generic tracks (new)
+    pub quic_tracks: Vec<GenericTrack>,
+}
+
+impl<I: PeerIdentity> Call<I> {
+    /// Check if this is a QUIC-native call
+    #[must_use]
+    pub fn is_quic_call(&self) -> bool {
+        self.media_transport.is_some()
+    }
+
+    /// Get all QUIC tracks
+    #[must_use]
+    pub fn get_quic_tracks(&self) -> &[GenericTrack] {
+        &self.quic_tracks
+    }
+
+    /// Get a QUIC track by ID
+    #[must_use]
+    pub fn get_quic_track_by_id(&self, id: &str) -> Option<&GenericTrack> {
+        self.quic_tracks.iter().find(|t| t.id() == id)
+    }
+
+    /// Add a QUIC track to this call
+    pub fn add_quic_track(&mut self, track: GenericTrack) {
+        tracing::info!(
+            call_id = %self.id,
+            track_id = %track.id(),
+            track_type = ?track.media_type(),
+            "Adding QUIC track to call"
+        );
+        self.quic_tracks.push(track);
+    }
+
+    /// Remove a QUIC track from this call
+    pub fn remove_quic_track(&mut self, track_id: &str) -> bool {
+        if let Some(pos) = self.quic_tracks.iter().position(|t| t.id() == track_id) {
+            tracing::info!(
+                call_id = %self.id,
+                track_id = %track_id,
+                "Removing QUIC track from call"
+            );
+            self.quic_tracks.remove(pos);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get the QUIC transport, if available
+    #[must_use]
+    pub fn transport(&self) -> Option<&Arc<QuicMediaTransport>> {
+        self.media_transport.as_ref()
+    }
 }
 
 /// Call manager
@@ -254,6 +311,7 @@ impl<I: PeerIdentity> CallManager<I> {
             state: CallState::Calling,
             constraints: constraints.clone(),
             tracks,
+            quic_tracks: Vec::new(),
         };
 
         let mut calls = self.calls.write().await;
@@ -863,7 +921,8 @@ impl<I: PeerIdentity> CallManager<I> {
             media_transport: Some(media_transport),
             state: CallState::Connecting,
             constraints: constraints.clone(),
-            tracks: Vec::new(), // QUIC calls don't use WebRTC tracks
+            tracks: Vec::new(),      // QUIC calls don't use WebRTC tracks
+            quic_tracks: Vec::new(), // QUIC tracks added after call creation
         };
 
         let mut calls = self.calls.write().await;
@@ -2050,5 +2109,136 @@ mod tests {
         let info = call_manager.get_call_info(fake_call_id).await;
 
         assert!(info.is_none());
+    }
+
+    // =========================================================================
+    // QUIC Track Tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_call_quic_tracks_initially_empty() {
+        let config = CallManagerConfig::default();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
+
+        let callee = PeerIdentityString::new("callee");
+        let constraints = MediaConstraints::audio_only();
+        let peer = test_peer();
+
+        let call_id = call_manager
+            .initiate_quic_call(callee, constraints, peer)
+            .await
+            .unwrap();
+
+        let calls = call_manager.calls.read().await;
+        let call = calls.get(&call_id).unwrap();
+
+        assert!(call.quic_tracks.is_empty());
+        assert!(call.is_quic_call());
+    }
+
+    #[tokio::test]
+    async fn test_call_add_quic_track() {
+        let config = CallManagerConfig::default();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
+
+        let callee = PeerIdentityString::new("callee");
+        let constraints = MediaConstraints::audio_only();
+        let peer = test_peer();
+
+        let call_id = call_manager
+            .initiate_quic_call(callee, constraints, peer)
+            .await
+            .unwrap();
+
+        // Create a QUIC track
+        let transport = Arc::new(QuicMediaTransport::new());
+        let audio = crate::media::AudioTrack::with_quic("test-audio", transport);
+        let generic = crate::media::GenericTrack::audio(audio);
+
+        // Add it to the call
+        {
+            let mut calls = call_manager.calls.write().await;
+            let call = calls.get_mut(&call_id).unwrap();
+            call.add_quic_track(generic);
+        }
+
+        // Verify it was added
+        let calls = call_manager.calls.read().await;
+        let call = calls.get(&call_id).unwrap();
+
+        assert_eq!(call.quic_tracks.len(), 1);
+        assert!(call.get_quic_track_by_id("test-audio").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_call_remove_quic_track() {
+        let config = CallManagerConfig::default();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
+
+        let callee = PeerIdentityString::new("callee");
+        let constraints = MediaConstraints::video_call();
+        let peer = test_peer();
+
+        let call_id = call_manager
+            .initiate_quic_call(callee, constraints, peer)
+            .await
+            .unwrap();
+
+        // Create and add tracks
+        let transport = Arc::new(QuicMediaTransport::new());
+        let audio = crate::media::AudioTrack::with_quic("audio-1", Arc::clone(&transport));
+        let video = crate::media::VideoTrack::with_quic("video-1", transport, 1280, 720);
+
+        {
+            let mut calls = call_manager.calls.write().await;
+            let call = calls.get_mut(&call_id).unwrap();
+            call.add_quic_track(crate::media::GenericTrack::audio(audio));
+            call.add_quic_track(crate::media::GenericTrack::video(video));
+        }
+
+        // Remove one track
+        {
+            let mut calls = call_manager.calls.write().await;
+            let call = calls.get_mut(&call_id).unwrap();
+            let removed = call.remove_quic_track("audio-1");
+            assert!(removed);
+        }
+
+        // Verify
+        let calls = call_manager.calls.read().await;
+        let call = calls.get(&call_id).unwrap();
+
+        assert_eq!(call.quic_tracks.len(), 1);
+        assert!(call.get_quic_track_by_id("audio-1").is_none());
+        assert!(call.get_quic_track_by_id("video-1").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_call_transport_accessor() {
+        let config = CallManagerConfig::default();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
+
+        let callee = PeerIdentityString::new("callee");
+        let constraints = MediaConstraints::audio_only();
+        let peer = test_peer();
+
+        let call_id = call_manager
+            .initiate_quic_call(callee, constraints, peer)
+            .await
+            .unwrap();
+
+        let calls = call_manager.calls.read().await;
+        let call = calls.get(&call_id).unwrap();
+
+        // Should have a transport since it's a QUIC call
+        assert!(call.transport().is_some());
     }
 }
