@@ -129,7 +129,11 @@ impl<I: PeerIdentity> CallManager<I> {
             callee.to_string_repr()
         );
 
-        // Create WebRTC peer connection
+        // Create QUIC-based media transport (Phase 3 migration)
+        let media_transport = Arc::new(QuicMediaTransport::new());
+        tracing::debug!("Created QuicMediaTransport for call {}", call_id);
+
+        // Create WebRTC peer connection (legacy path, will be removed in Phase 3.2)
         let peer_connection = Arc::new(
             webrtc::api::APIBuilder::new()
                 .build()
@@ -187,7 +191,7 @@ impl<I: PeerIdentity> CallManager<I> {
             id: call_id,
             remote_peer: callee.clone(),
             peer_connection,
-            media_transport: None,
+            media_transport: Some(media_transport),
             state: CallState::Calling,
             constraints: constraints.clone(),
             tracks,
@@ -452,6 +456,17 @@ impl<I: PeerIdentity> CallManager<I> {
     pub fn subscribe_events(&self) -> broadcast::Receiver<CallEvent<I>> {
         self.event_sender.subscribe()
     }
+
+    /// Check if a call has a QUIC media transport
+    ///
+    /// Returns `true` if the call has an associated `QuicMediaTransport`.
+    #[must_use]
+    pub async fn has_media_transport(&self, call_id: CallId) -> bool {
+        let calls = self.calls.read().await;
+        calls
+            .get(&call_id)
+            .is_some_and(|call| call.media_transport.is_some())
+    }
 }
 
 #[cfg(test)]
@@ -477,6 +492,28 @@ mod tests {
 
         let state = call_manager.get_call_state(call_id).await;
         assert_eq!(state, Some(CallState::Calling));
+    }
+
+    #[tokio::test]
+    async fn test_call_manager_initiate_call_creates_media_transport() {
+        let config = CallManagerConfig::default();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
+
+        let callee = PeerIdentityString::new("callee");
+        let constraints = MediaConstraints::audio_only();
+
+        let call_id = call_manager
+            .initiate_call(callee, constraints)
+            .await
+            .unwrap();
+
+        // Verify QuicMediaTransport is created for new calls
+        assert!(
+            call_manager.has_media_transport(call_id).await,
+            "New calls should have QuicMediaTransport initialized"
+        );
     }
 
     #[tokio::test]
