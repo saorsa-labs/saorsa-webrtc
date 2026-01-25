@@ -6,7 +6,9 @@ use saorsa_webrtc_core::{
 };
 
 #[tokio::test]
+#[allow(deprecated)]
 async fn handle_answer_rejects_empty_sdp() {
+    // Tests legacy SDP answer handling (deprecated for QUIC-native calls)
     let mgr = CallManager::<PeerIdentityString>::new(CallManagerConfig::default())
         .await
         .unwrap();
@@ -23,7 +25,9 @@ async fn handle_answer_rejects_empty_sdp() {
 }
 
 #[tokio::test]
+#[allow(deprecated)]
 async fn handle_answer_rejects_malformed_sdp() {
+    // Tests legacy SDP answer handling (deprecated for QUIC-native calls)
     let mgr = CallManager::<PeerIdentityString>::new(CallManagerConfig::default())
         .await
         .unwrap();

@@ -408,11 +408,23 @@ impl<I: PeerIdentity> CallManager<I> {
         calls.get(&call_id).map(|call| call.state)
     }
 
-    /// Create SDP offer for a call
+    /// Create SDP offer for a call (legacy WebRTC only)
+    ///
+    /// **Deprecated**: This method is for legacy WebRTC calls only.
+    /// QUIC-native calls do not use SDP - use `exchange_capabilities` instead.
+    ///
+    /// # Deprecation Path
+    ///
+    /// - Phase 3.2: Both SDP and capability exchange are available
+    /// - Phase 3.3: SDP methods will be removed entirely
     ///
     /// # Errors
     ///
     /// Returns error if offer cannot be created
+    #[deprecated(
+        since = "0.3.0",
+        note = "Use QUIC-native call flow (exchange_capabilities) instead. SDP is only for legacy WebRTC calls."
+    )]
     #[tracing::instrument(skip(self), fields(call_id = %call_id))]
     pub async fn create_offer(&self, call_id: CallId) -> Result<String, CallError> {
         let calls = self.calls.read().await;
@@ -437,11 +449,23 @@ impl<I: PeerIdentity> CallManager<I> {
         }
     }
 
-    /// Handle SDP answer for a call
+    /// Handle SDP answer for a call (legacy WebRTC only)
+    ///
+    /// **Deprecated**: This method is for legacy WebRTC calls only.
+    /// QUIC-native calls do not use SDP - use `confirm_connection` instead.
+    ///
+    /// # Deprecation Path
+    ///
+    /// - Phase 3.2: Both SDP and capability exchange are available
+    /// - Phase 3.3: SDP methods will be removed entirely
     ///
     /// # Errors
     ///
     /// Returns error if answer cannot be handled
+    #[deprecated(
+        since = "0.3.0",
+        note = "Use QUIC-native call flow (confirm_connection) instead. SDP is only for legacy WebRTC calls."
+    )]
     #[tracing::instrument(skip(self, sdp), fields(call_id = %call_id, sdp_len = sdp.len()))]
     pub async fn handle_answer(&self, call_id: CallId, sdp: String) -> Result<(), CallError> {
         tracing::debug!("Processing SDP answer");
@@ -1194,7 +1218,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_call_manager_create_offer() {
+    #[allow(deprecated)]
+    async fn test_call_manager_create_offer_legacy() {
+        // Tests legacy SDP offer creation (deprecated for QUIC-native calls)
         let config = CallManagerConfig::default();
         let call_manager = CallManager::<PeerIdentityString>::new(config)
             .await
@@ -1281,9 +1307,11 @@ mod tests {
         let result = call_manager.end_call(fake_call_id).await;
         assert!(matches!(result, Err(CallError::CallNotFound(_))));
 
+        #[allow(deprecated)]
         let result = call_manager.create_offer(fake_call_id).await;
         assert!(matches!(result, Err(CallError::CallNotFound(_))));
 
+        #[allow(deprecated)]
         let result = call_manager
             .handle_answer(fake_call_id, "dummy".to_string())
             .await;
