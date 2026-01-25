@@ -31,6 +31,20 @@ pub enum StreamType {
     ScreenShare,
 }
 
+/// Stream type tag constants for QUIC streams
+pub mod stream_tags {
+    /// Audio stream type tag
+    pub const AUDIO: u8 = 0x21;
+    /// Video stream type tag
+    pub const VIDEO: u8 = 0x22;
+    /// Screen share stream type tag
+    pub const SCREEN_SHARE: u8 = 0x23;
+    /// RTCP feedback stream type tag
+    pub const RTCP_FEEDBACK: u8 = 0x24;
+    /// Data channel stream type tag
+    pub const DATA: u8 = 0x25;
+}
+
 impl StreamType {
     /// Get priority value (lower = higher priority)
     #[must_use]
@@ -47,6 +61,31 @@ impl StreamType {
     #[must_use]
     pub const fn is_realtime(&self) -> bool {
         matches!(self, Self::Audio | Self::Video | Self::ScreenShare)
+    }
+
+    /// Convert to stream type tag byte for QUIC framing
+    #[must_use]
+    pub const fn to_tag(&self) -> u8 {
+        match self {
+            Self::Audio => stream_tags::AUDIO,
+            Self::Video => stream_tags::VIDEO,
+            Self::ScreenShare => stream_tags::SCREEN_SHARE,
+            Self::Data => stream_tags::DATA,
+        }
+    }
+
+    /// Create from stream type tag byte
+    ///
+    /// Returns None if tag is not a valid stream type
+    #[must_use]
+    pub const fn from_tag(tag: u8) -> Option<Self> {
+        match tag {
+            stream_tags::AUDIO => Some(Self::Audio),
+            stream_tags::VIDEO => Some(Self::Video),
+            stream_tags::SCREEN_SHARE => Some(Self::ScreenShare),
+            stream_tags::DATA => Some(Self::Data),
+            _ => None,
+        }
     }
 }
 
@@ -418,5 +457,82 @@ mod tests {
 
         let result = bridge.bridge_track("audio-track").await;
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_stream_type_to_tag() {
+        assert_eq!(StreamType::Audio.to_tag(), stream_tags::AUDIO);
+        assert_eq!(StreamType::Video.to_tag(), stream_tags::VIDEO);
+        assert_eq!(StreamType::ScreenShare.to_tag(), stream_tags::SCREEN_SHARE);
+        assert_eq!(StreamType::Data.to_tag(), stream_tags::DATA);
+    }
+
+    #[test]
+    fn test_stream_type_from_tag() {
+        assert_eq!(StreamType::from_tag(stream_tags::AUDIO), Some(StreamType::Audio));
+        assert_eq!(StreamType::from_tag(stream_tags::VIDEO), Some(StreamType::Video));
+        assert_eq!(StreamType::from_tag(stream_tags::SCREEN_SHARE), Some(StreamType::ScreenShare));
+        assert_eq!(StreamType::from_tag(stream_tags::DATA), Some(StreamType::Data));
+        assert_eq!(StreamType::from_tag(0xFF), None); // Invalid tag
+    }
+
+    #[test]
+    fn test_tagged_bytes_roundtrip() {
+        let packet = RtpPacket::new(
+            96,
+            1234,
+            56789,
+            0xABCDEF01,
+            vec![0x01, 0x02, 0x03, 0x04, 0x05],
+            StreamType::Audio,
+        )
+        .expect("Failed to create packet");
+
+        let tagged = packet.to_tagged_bytes().expect("Failed to serialize");
+
+        // First byte should be stream type tag
+        assert_eq!(tagged[0], stream_tags::AUDIO);
+
+        // Deserialize should produce same packet
+        let restored = RtpPacket::from_tagged_bytes(&tagged).expect("Failed to deserialize");
+        assert_eq!(restored.payload_type, 96);
+        assert_eq!(restored.sequence_number, 1234);
+        assert_eq!(restored.timestamp, 56789);
+        assert_eq!(restored.ssrc, 0xABCDEF01);
+        assert_eq!(restored.stream_type, StreamType::Audio);
+    }
+
+    #[test]
+    fn test_tagged_bytes_video() {
+        let packet = RtpPacket::new(
+            98,
+            5000,
+            100000,
+            0x12345678,
+            vec![0xAA, 0xBB],
+            StreamType::Video,
+        )
+        .expect("Failed to create packet");
+
+        let tagged = packet.to_tagged_bytes().expect("Failed to serialize");
+        assert_eq!(tagged[0], stream_tags::VIDEO);
+
+        let restored = RtpPacket::from_tagged_bytes(&tagged).expect("Failed to deserialize");
+        assert_eq!(restored.stream_type, StreamType::Video);
+    }
+
+    #[test]
+    fn test_tagged_bytes_invalid_tag() {
+        // Create invalid tagged bytes (bad tag)
+        let invalid = vec![0xFF, 0x00, 0x01]; // Invalid tag 0xFF
+
+        let result = RtpPacket::from_tagged_bytes(&invalid);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_tagged_bytes_empty() {
+        let result = RtpPacket::from_tagged_bytes(&[]);
+        assert!(result.is_err());
     }
 }
