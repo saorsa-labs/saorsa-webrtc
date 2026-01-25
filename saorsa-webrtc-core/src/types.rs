@@ -311,6 +311,74 @@ pub struct AdaptationSettings {
     pub enable_dtx: bool,
 }
 
+/// Media capabilities for QUIC-native signaling
+///
+/// Replaces SDP offer/answer with a simpler capability exchange.
+/// Used to negotiate media types and bandwidth without WebRTC SDP overhead.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MediaCapabilities {
+    /// Audio capability
+    pub audio: bool,
+    /// Video capability
+    pub video: bool,
+    /// Data channel capability
+    pub data_channel: bool,
+    /// Maximum bandwidth in kbps
+    pub max_bandwidth_kbps: u32,
+}
+
+impl MediaCapabilities {
+    /// Create capabilities from media constraints
+    #[must_use]
+    pub fn from_constraints(constraints: &MediaConstraints) -> Self {
+        Self {
+            audio: constraints.audio,
+            video: constraints.video || constraints.screen_share,
+            data_channel: false, // Default to no data channel
+            max_bandwidth_kbps: if constraints.video || constraints.screen_share {
+                2500 // Video calls need more bandwidth
+            } else {
+                128 // Audio-only calls
+            },
+        }
+    }
+
+    /// Create audio-only capabilities
+    #[must_use]
+    pub fn audio_only() -> Self {
+        Self {
+            audio: true,
+            video: false,
+            data_channel: false,
+            max_bandwidth_kbps: 128,
+        }
+    }
+
+    /// Create video capabilities
+    #[must_use]
+    pub fn video() -> Self {
+        Self {
+            audio: true,
+            video: true,
+            data_channel: false,
+            max_bandwidth_kbps: 2500,
+        }
+    }
+
+    /// Check if capabilities are compatible with constraints
+    #[must_use]
+    pub fn satisfies(&self, constraints: &MediaConstraints) -> bool {
+        (!constraints.audio || self.audio)
+            && (!(constraints.video || constraints.screen_share) || self.video)
+    }
+}
+
+impl Default for MediaCapabilities {
+    fn default() -> Self {
+        Self::audio_only()
+    }
+}
+
 /// Video resolution options
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VideoResolution {
@@ -662,5 +730,53 @@ mod tests {
             call_state_from_transport(MediaTransportState::Disconnected),
             CallState::Idle
         );
+    }
+
+    #[test]
+    fn test_media_capabilities_from_constraints() {
+        // Video call
+        let video_constraints = MediaConstraints::video_call();
+        let caps = MediaCapabilities::from_constraints(&video_constraints);
+        assert!(caps.audio);
+        assert!(caps.video);
+        assert!(!caps.data_channel);
+        assert_eq!(caps.max_bandwidth_kbps, 2500);
+
+        // Audio only
+        let audio_constraints = MediaConstraints::audio_only();
+        let caps = MediaCapabilities::from_constraints(&audio_constraints);
+        assert!(caps.audio);
+        assert!(!caps.video);
+        assert_eq!(caps.max_bandwidth_kbps, 128);
+
+        // Screen share (treated as video)
+        let screen_constraints = MediaConstraints::screen_share();
+        let caps = MediaCapabilities::from_constraints(&screen_constraints);
+        assert!(caps.audio);
+        assert!(caps.video); // Screen share maps to video capability
+        assert_eq!(caps.max_bandwidth_kbps, 2500);
+    }
+
+    #[test]
+    fn test_media_capabilities_satisfies() {
+        let video_caps = MediaCapabilities::video();
+        let audio_caps = MediaCapabilities::audio_only();
+
+        // Video caps satisfy video constraints
+        assert!(video_caps.satisfies(&MediaConstraints::video_call()));
+        assert!(video_caps.satisfies(&MediaConstraints::audio_only()));
+
+        // Audio caps don't satisfy video constraints
+        assert!(!audio_caps.satisfies(&MediaConstraints::video_call()));
+        assert!(audio_caps.satisfies(&MediaConstraints::audio_only()));
+    }
+
+    #[test]
+    fn test_media_capabilities_default() {
+        let caps = MediaCapabilities::default();
+        assert!(caps.audio);
+        assert!(!caps.video);
+        assert!(!caps.data_channel);
+        assert_eq!(caps.max_bandwidth_kbps, 128);
     }
 }

@@ -7,7 +7,7 @@ use crate::identity::PeerIdentity;
 use crate::link_transport::PeerConnection;
 use crate::media::{MediaStreamManager, WebRtcTrack};
 use crate::quic_media_transport::{MediaTransportError, MediaTransportState, QuicMediaTransport};
-use crate::types::{CallEvent, CallId, CallState, MediaConstraints};
+use crate::types::{CallEvent, CallId, CallState, MediaCapabilities, MediaConstraints};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -486,6 +486,73 @@ impl<I: PeerIdentity> CallManager<I> {
         } else {
             Err(CallError::CallNotFound(call_id.to_string()))
         }
+    }
+
+    /// Exchange media capabilities with peer (QUIC-native)
+    ///
+    /// Replaces SDP offer creation with a simpler capability exchange.
+    /// Returns the local capabilities that should be sent to the remote peer.
+    ///
+    /// # Flow
+    ///
+    /// 1. Caller invokes `exchange_capabilities` to get local capabilities
+    /// 2. Caller sends capabilities to callee via signaling
+    /// 3. Callee receives capabilities and calls `confirm_connection`
+    ///
+    /// # Arguments
+    ///
+    /// * `call_id` - The call to exchange capabilities for
+    ///
+    /// # Errors
+    ///
+    /// Returns error if call not found or call is not in a valid state.
+    #[tracing::instrument(skip(self), fields(call_id = %call_id))]
+    pub async fn exchange_capabilities(
+        &self,
+        call_id: CallId,
+    ) -> Result<MediaCapabilities, CallError> {
+        let mut calls = self.calls.write().await;
+        let call = calls
+            .get_mut(&call_id)
+            .ok_or_else(|| CallError::CallNotFound(call_id.to_string()))?;
+
+        // Validate call is in a state where capability exchange is valid
+        match call.state {
+            CallState::Calling | CallState::Connecting => {
+                // Valid states for capability exchange
+            }
+            _ => {
+                tracing::warn!(
+                    "Cannot exchange capabilities for call {} in state {:?}",
+                    call_id,
+                    call.state
+                );
+                return Err(CallError::InvalidState);
+            }
+        }
+
+        // Transition to Connecting if still Calling
+        if call.state == CallState::Calling {
+            call.state = CallState::Connecting;
+            tracing::debug!(
+                call_id = %call_id,
+                "Call state transition: Calling -> Connecting"
+            );
+        }
+
+        // Generate capabilities from call constraints
+        let capabilities = MediaCapabilities::from_constraints(&call.constraints);
+
+        tracing::info!(
+            call_id = %call_id,
+            audio = capabilities.audio,
+            video = capabilities.video,
+            data_channel = capabilities.data_channel,
+            max_bandwidth = capabilities.max_bandwidth_kbps,
+            "Capabilities exchanged"
+        );
+
+        Ok(capabilities)
     }
 
     /// Subscribe to call events
@@ -1209,6 +1276,97 @@ mod tests {
                 CallState::Connected
             )
         );
+    }
+
+    #[tokio::test]
+    async fn test_exchange_capabilities() {
+        let config = CallManagerConfig::default();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
+
+        let callee = PeerIdentityString::new("callee");
+        let constraints = MediaConstraints::video_call();
+
+        let call_id = call_manager
+            .initiate_call(callee, constraints)
+            .await
+            .unwrap();
+
+        // Exchange capabilities
+        let capabilities = call_manager.exchange_capabilities(call_id).await.unwrap();
+
+        // Verify capabilities match constraints
+        assert!(capabilities.audio);
+        assert!(capabilities.video);
+        assert!(!capabilities.data_channel);
+        assert!(capabilities.max_bandwidth_kbps > 0);
+
+        // Verify state transitioned to Connecting
+        let state = call_manager.get_call_state(call_id).await;
+        assert_eq!(state, Some(CallState::Connecting));
+    }
+
+    #[tokio::test]
+    async fn test_exchange_capabilities_audio_only() {
+        let config = CallManagerConfig::default();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
+
+        let callee = PeerIdentityString::new("callee");
+        let constraints = MediaConstraints::audio_only();
+
+        let call_id = call_manager
+            .initiate_call(callee, constraints)
+            .await
+            .unwrap();
+
+        let capabilities = call_manager.exchange_capabilities(call_id).await.unwrap();
+
+        assert!(capabilities.audio);
+        assert!(!capabilities.video);
+        assert_eq!(capabilities.max_bandwidth_kbps, 128);
+    }
+
+    #[tokio::test]
+    async fn test_exchange_capabilities_not_found() {
+        let config = CallManagerConfig::default();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
+
+        let fake_call_id = CallId::new();
+        let result = call_manager.exchange_capabilities(fake_call_id).await;
+
+        assert!(matches!(result, Err(CallError::CallNotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn test_exchange_capabilities_invalid_state() {
+        let config = CallManagerConfig::default();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
+
+        let callee = PeerIdentityString::new("callee");
+        let constraints = MediaConstraints::audio_only();
+
+        let call_id = call_manager
+            .initiate_call(callee, constraints.clone())
+            .await
+            .unwrap();
+
+        // Accept the call to move it to Connected state
+        call_manager
+            .accept_call(call_id, constraints)
+            .await
+            .unwrap();
+
+        // Try to exchange capabilities in Connected state - should fail
+        let result = call_manager.exchange_capabilities(call_id).await;
+
+        assert!(matches!(result, Err(CallError::InvalidState)));
     }
 
     /// Test that verifies PeerIdentity type safety is preserved across all methods
