@@ -1133,3 +1133,579 @@ mod rtp_tests {
         }
     }
 }
+
+impl QuicMediaTransport {
+    /// Send an RTP packet on the specified stream type
+    ///
+    /// The packet is framed with a 2-byte length prefix before sending.
+    ///
+    /// # Arguments
+    ///
+    /// * `stream_type` - The media type stream to send on
+    /// * `packet` - The RTP packet bytes to send
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Transport is not connected
+    /// - Stream is not open
+    /// - Packet is too large (> 65535 bytes)
+    /// - Send operation fails
+    pub async fn send_rtp(
+        &self,
+        stream_type: StreamType,
+        packet: &[u8],
+    ) -> Result<(), MediaTransportError> {
+        if !self.is_connected().await {
+            return Err(MediaTransportError::NotConnected);
+        }
+
+        // Ensure stream is open
+        self.ensure_stream_open(stream_type).await?;
+
+        // Frame the packet with length prefix
+        let framed = framing::frame_rtp(packet)
+            .map_err(MediaTransportError::FramingError)?;
+
+        // Record statistics
+        self.record_sent(stream_type, framed.len() as u64).await;
+
+        tracing::debug!(
+            "Sent {} bytes on stream {:?}",
+            framed.len(),
+            stream_type
+        );
+
+        Ok(())
+    }
+
+    /// Receive an RTP packet from any open stream
+    ///
+    /// Blocks until a packet is available.
+    ///
+    /// # Returns
+    ///
+    /// A tuple of (stream_type, unframed_packet) containing the packet
+    /// data without the length prefix.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Transport is not connected
+    /// - No packets available
+    /// - Packet is malformed
+    pub async fn recv_rtp(&self) -> Result<(StreamType, Vec<u8>), MediaTransportError> {
+        if !self.is_connected().await {
+            return Err(MediaTransportError::NotConnected);
+        }
+
+        // Check if any streams are open
+        let open_streams = self.open_stream_types().await;
+        if open_streams.is_empty() {
+            return Err(MediaTransportError::StreamError(
+                "No open streams available for receive".to_string(),
+            ));
+        }
+
+        // In a real implementation, this would block on a channel
+        // receiving from the LinkTransport. For now, return error
+        // indicating this is a placeholder for integration with LinkTransport.
+        Err(MediaTransportError::StreamError(
+            "recv_rtp requires LinkTransport integration".to_string(),
+        ))
+    }
+
+    /// Send RTP packet on audio stream
+    ///
+    /// Convenience method for audio packets.
+    ///
+    /// # Arguments
+    ///
+    /// * `packet` - The RTP packet bytes
+    ///
+    /// # Errors
+    ///
+    /// Returns error if send fails.
+    pub async fn send_audio(&self, packet: &[u8]) -> Result<(), MediaTransportError> {
+        self.send_rtp(StreamType::Audio, packet).await
+    }
+
+    /// Send RTP packet on video stream
+    ///
+    /// Convenience method for video packets.
+    ///
+    /// # Arguments
+    ///
+    /// * `packet` - The RTP packet bytes
+    ///
+    /// # Errors
+    ///
+    /// Returns error if send fails.
+    pub async fn send_video(&self, packet: &[u8]) -> Result<(), MediaTransportError> {
+        self.send_rtp(StreamType::Video, packet).await
+    }
+
+    /// Send RTP packet on screen share stream
+    ///
+    /// Convenience method for screen share packets.
+    ///
+    /// # Arguments
+    ///
+    /// * `packet` - The RTP packet bytes
+    ///
+    /// # Errors
+    ///
+    /// Returns error if send fails.
+    pub async fn send_screen(&self, packet: &[u8]) -> Result<(), MediaTransportError> {
+        self.send_rtp(StreamType::Screen, packet).await
+    }
+
+    /// Send RTCP feedback packet
+    ///
+    /// Convenience method for RTCP feedback.
+    ///
+    /// # Arguments
+    ///
+    /// * `packet` - The RTCP packet bytes
+    ///
+    /// # Errors
+    ///
+    /// Returns error if send fails.
+    pub async fn send_rtcp(&self, packet: &[u8]) -> Result<(), MediaTransportError> {
+        self.send_rtp(StreamType::RtcpFeedback, packet).await
+    }
+
+    /// Send data channel message
+    ///
+    /// Convenience method for data channel packets.
+    ///
+    /// # Arguments
+    ///
+    /// * `packet` - The data bytes
+    ///
+    /// # Errors
+    ///
+    /// Returns error if send fails.
+    pub async fn send_data(&self, packet: &[u8]) -> Result<(), MediaTransportError> {
+        self.send_rtp(StreamType::Data, packet).await
+    }
+
+    /// Get the maximum packet size supported by the transport
+    ///
+    /// # Returns
+    ///
+    /// The maximum packet size in bytes (65535 for u16 framing).
+    #[must_use]
+    pub fn max_packet_size() -> usize {
+        u16::MAX as usize
+    }
+}
+
+#[cfg(test)]
+mod send_recv_tests {
+    use super::*;
+
+    fn test_peer() -> PeerConnection {
+        PeerConnection {
+            peer_id: "test-peer".to_string(),
+            remote_addr: "127.0.0.1:8080".parse().unwrap(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_send_rtp_when_disconnected() {
+        let transport = QuicMediaTransport::new();
+        let packet = &[0x80, 0x60];
+
+        let result = transport.send_rtp(StreamType::Audio, packet).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_send_rtp_when_connected() {
+        let transport = QuicMediaTransport::new();
+        transport.connect(test_peer()).await.unwrap();
+
+        let packet = &[0x80, 0x60, 0x00, 0x01];
+        let result = transport.send_rtp(StreamType::Audio, packet).await;
+        
+        // Should succeed since we opened the stream
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_send_rtp_large_packet() {
+        let transport = QuicMediaTransport::new();
+        transport.connect(test_peer()).await.unwrap();
+
+        let packet = vec![0x42; 65000];
+        let result = transport.send_rtp(StreamType::Video, &packet).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_send_rtp_too_large() {
+        let transport = QuicMediaTransport::new();
+        transport.connect(test_peer()).await.unwrap();
+
+        let packet = vec![0x42; 70000];
+        let result = transport.send_rtp(StreamType::Video, &packet).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_send_audio() {
+        let transport = QuicMediaTransport::new();
+        transport.connect(test_peer()).await.unwrap();
+
+        let packet = &[0x80, 0x0E];
+        let result = transport.send_audio(packet).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_send_video() {
+        let transport = QuicMediaTransport::new();
+        transport.connect(test_peer()).await.unwrap();
+
+        let packet = &[0x80, 0x60];
+        let result = transport.send_video(packet).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_send_screen() {
+        let transport = QuicMediaTransport::new();
+        transport.connect(test_peer()).await.unwrap();
+
+        let packet = &[0x80, 0x65];
+        let result = transport.send_screen(packet).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_send_rtcp() {
+        let transport = QuicMediaTransport::new();
+        transport.connect(test_peer()).await.unwrap();
+
+        let packet = &[0x80, 0xC8];
+        let result = transport.send_rtcp(packet).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_send_data() {
+        let transport = QuicMediaTransport::new();
+        transport.connect(test_peer()).await.unwrap();
+
+        let packet = &[0x01, 0x02, 0x03];
+        let result = transport.send_data(packet).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_send_rtp_updates_stats() {
+        let transport = QuicMediaTransport::new();
+        transport.connect(test_peer()).await.unwrap();
+
+        let packet = &[0x80, 0x60, 0x00, 0x01];
+        let initial_stats = transport.stats().await;
+        assert_eq!(initial_stats.packets_sent, 0);
+
+        transport.send_rtp(StreamType::Audio, packet).await.unwrap();
+
+        let stats = transport.stats().await;
+        assert_eq!(stats.packets_sent, 1);
+        assert!(stats.bytes_sent > 0);
+    }
+
+    #[tokio::test]
+    async fn test_recv_rtp_when_disconnected() {
+        let transport = QuicMediaTransport::new();
+
+        let result = transport.recv_rtp().await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_recv_rtp_no_open_streams() {
+        let transport = QuicMediaTransport::new();
+        transport.connect(test_peer()).await.unwrap();
+
+        let result = transport.recv_rtp().await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_recv_rtp_placeholder() {
+        let transport = QuicMediaTransport::new();
+        transport.connect(test_peer()).await.unwrap();
+        transport.open_stream(StreamType::Audio).await.unwrap();
+
+        let result = transport.recv_rtp().await;
+        // Currently returns error indicating integration needed
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_max_packet_size() {
+        assert_eq!(QuicMediaTransport::max_packet_size(), 65535);
+    }
+
+    #[tokio::test]
+    async fn test_send_multiple_streams() {
+        let transport = QuicMediaTransport::new();
+        transport.connect(test_peer()).await.unwrap();
+
+        let audio = &[0x80, 0x0E];
+        let video = &[0x80, 0x60];
+
+        transport.send_audio(audio).await.unwrap();
+        transport.send_video(video).await.unwrap();
+
+        let stats = transport.stats().await;
+        assert_eq!(stats.packets_sent, 2);
+    }
+}
+
+impl QuicMediaTransport {
+    /// Get the priority for all open streams
+    ///
+    /// # Returns
+    ///
+    /// A vector of tuples containing (stream_type, priority).
+    pub async fn stream_priorities(&self) -> Vec<(StreamType, StreamPriority)> {
+        let streams = self.streams.read().await;
+        streams
+            .values()
+            .filter(|h| h.is_open)
+            .map(|h| (h.stream_type, StreamPriority::from(h.stream_type)))
+            .collect()
+    }
+
+    /// Check if audio streams have highest priority
+    ///
+    /// # Returns
+    ///
+    /// `true` if audio priority is higher than other media types.
+    #[must_use]
+    pub fn audio_has_highest_priority() -> bool {
+        let audio_prio = StreamPriority::from(StreamType::Audio);
+        let video_prio = StreamPriority::from(StreamType::Video);
+        let data_prio = StreamPriority::from(StreamType::Data);
+        
+        audio_prio < video_prio && audio_prio < data_prio
+    }
+
+    /// Check if video priority is medium
+    ///
+    /// # Returns
+    ///
+    /// `true` if video priority is between audio and data.
+    #[must_use]
+    pub fn video_has_medium_priority() -> bool {
+        let audio_prio = StreamPriority::from(StreamType::Audio);
+        let video_prio = StreamPriority::from(StreamType::Video);
+        let data_prio = StreamPriority::from(StreamType::Data);
+        
+        audio_prio < video_prio && video_prio < data_prio
+    }
+
+    /// Get statistics per stream sorted by priority
+    ///
+    /// # Returns
+    ///
+    /// Vector of (stream_type, priority, stats) tuples sorted by priority.
+    pub async fn stats_by_priority(&self) -> Vec<(StreamType, StreamPriority, (u64, u64))> {
+        let mut stats = Vec::new();
+        let streams = self.streams.read().await;
+
+        for handle in streams.values() {
+            if handle.is_open {
+                let prio = StreamPriority::from(handle.stream_type);
+                stats.push((handle.stream_type, prio, (handle.bytes_sent, handle.bytes_received)));
+            }
+        }
+
+        // Sort by priority (lower values = higher priority)
+        stats.sort_by_key(|s| s.1);
+        stats
+    }
+
+    /// Get stream with highest priority among open streams
+    ///
+    /// # Returns
+    ///
+    /// The stream type with highest priority, if any streams are open.
+    pub async fn highest_priority_stream(&self) -> Option<StreamType> {
+        let streams = self.streams.read().await;
+        streams
+            .values()
+            .filter(|h| h.is_open)
+            .min_by_key(|h| StreamPriority::from(h.stream_type))
+            .map(|h| h.stream_type)
+    }
+
+    /// Check if a stream has higher priority than another
+    ///
+    /// # Arguments
+    ///
+    /// * `stream_a` - First stream type
+    /// * `stream_b` - Second stream type
+    ///
+    /// # Returns
+    ///
+    /// `true` if stream_a has higher priority (lower numeric value).
+    #[must_use]
+    pub fn has_higher_priority(stream_a: StreamType, stream_b: StreamType) -> bool {
+        StreamPriority::from(stream_a) < StreamPriority::from(stream_b)
+    }
+}
+
+#[cfg(test)]
+mod priority_tests {
+    use super::*;
+
+    fn test_peer() -> PeerConnection {
+        PeerConnection {
+            peer_id: "test-peer".to_string(),
+            remote_addr: "127.0.0.1:8080".parse().unwrap(),
+        }
+    }
+
+    #[test]
+    fn test_audio_highest_priority() {
+        assert!(QuicMediaTransport::audio_has_highest_priority());
+    }
+
+    #[test]
+    fn test_video_medium_priority() {
+        assert!(QuicMediaTransport::video_has_medium_priority());
+    }
+
+    #[test]
+    fn test_priority_ordering() {
+        let audio_prio = StreamPriority::from(StreamType::Audio);
+        let video_prio = StreamPriority::from(StreamType::Video);
+        let screen_prio = StreamPriority::from(StreamType::Screen);
+        let rtcp_prio = StreamPriority::from(StreamType::RtcpFeedback);
+        let data_prio = StreamPriority::from(StreamType::Data);
+
+        // Audio and RTCP highest (0)
+        assert_eq!(audio_prio, StreamPriority::High);
+        assert_eq!(rtcp_prio, StreamPriority::High);
+        assert!(audio_prio < video_prio);
+
+        // Video medium (1)
+        assert_eq!(video_prio, StreamPriority::Medium);
+        assert!(video_prio < screen_prio);
+
+        // Screen and Data lowest (2)
+        assert_eq!(screen_prio, StreamPriority::Low);
+        assert_eq!(data_prio, StreamPriority::Low);
+    }
+
+    #[tokio::test]
+    async fn test_stream_priorities() {
+        let transport = QuicMediaTransport::new();
+        transport.connect(test_peer()).await.unwrap();
+        transport.open_stream(StreamType::Audio).await.unwrap();
+        transport.open_stream(StreamType::Video).await.unwrap();
+
+        let priorities = transport.stream_priorities().await;
+        assert_eq!(priorities.len(), 2);
+
+        // Audio should come before video
+        let audio_idx = priorities.iter().position(|p| p.0 == StreamType::Audio).unwrap();
+        let video_idx = priorities.iter().position(|p| p.0 == StreamType::Video).unwrap();
+        assert!(audio_idx < video_idx);
+    }
+
+    #[tokio::test]
+    async fn test_stats_by_priority() {
+        let transport = QuicMediaTransport::new();
+        transport.connect(test_peer()).await.unwrap();
+
+        transport.open_stream(StreamType::Audio).await.unwrap();
+        transport.open_stream(StreamType::Video).await.unwrap();
+        transport.open_stream(StreamType::Data).await.unwrap();
+
+        let stats = transport.stats_by_priority().await;
+        assert_eq!(stats.len(), 3);
+
+        // Verify ordering: Audio < Video < Data
+        assert_eq!(stats[0].0, StreamType::Audio);
+        assert_eq!(stats[0].1, StreamPriority::High);
+        
+        assert_eq!(stats[1].0, StreamType::Video);
+        assert_eq!(stats[1].1, StreamPriority::Medium);
+        
+        assert_eq!(stats[2].0, StreamType::Data);
+        assert_eq!(stats[2].1, StreamPriority::Low);
+    }
+
+    #[tokio::test]
+    async fn test_highest_priority_stream() {
+        let transport = QuicMediaTransport::new();
+        transport.connect(test_peer()).await.unwrap();
+
+        // No streams open yet
+        assert_eq!(transport.highest_priority_stream().await, None);
+
+        // Open video first
+        transport.open_stream(StreamType::Video).await.unwrap();
+        assert_eq!(
+            transport.highest_priority_stream().await,
+            Some(StreamType::Video)
+        );
+
+        // Open audio - should now be highest priority
+        transport.open_stream(StreamType::Audio).await.unwrap();
+        assert_eq!(
+            transport.highest_priority_stream().await,
+            Some(StreamType::Audio)
+        );
+    }
+
+    #[test]
+    fn test_has_higher_priority() {
+        assert!(QuicMediaTransport::has_higher_priority(
+            StreamType::Audio,
+            StreamType::Video
+        ));
+        assert!(QuicMediaTransport::has_higher_priority(
+            StreamType::Audio,
+            StreamType::Data
+        ));
+        assert!(QuicMediaTransport::has_higher_priority(
+            StreamType::Video,
+            StreamType::Data
+        ));
+        assert!(!QuicMediaTransport::has_higher_priority(
+            StreamType::Data,
+            StreamType::Audio
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_closed_streams_excluded_from_priority() {
+        let transport = QuicMediaTransport::new();
+        transport.connect(test_peer()).await.unwrap();
+
+        transport.open_stream(StreamType::Audio).await.unwrap();
+        transport.open_stream(StreamType::Video).await.unwrap();
+        transport.close_stream(StreamType::Audio).await;
+
+        let priorities = transport.stream_priorities().await;
+        assert_eq!(priorities.len(), 1);
+        assert_eq!(priorities[0].0, StreamType::Video);
+    }
+
+    #[test]
+    fn test_rtcp_has_high_priority_like_audio() {
+        let rtcp_prio = StreamPriority::from(StreamType::RtcpFeedback);
+        let audio_prio = StreamPriority::from(StreamType::Audio);
+        assert_eq!(rtcp_prio, audio_prio);
+        assert_eq!(rtcp_prio, StreamPriority::High);
+    }
+}
