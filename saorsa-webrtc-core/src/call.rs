@@ -555,6 +555,103 @@ impl<I: PeerIdentity> CallManager<I> {
         Ok(capabilities)
     }
 
+    /// Confirm peer capabilities and activate connection (QUIC-native)
+    ///
+    /// Called after exchanging capabilities. Verifies peer capabilities
+    /// match our constraints and confirms QUIC connection is ready.
+    ///
+    /// # Flow
+    ///
+    /// 1. Caller sends capabilities to callee
+    /// 2. Callee receives capabilities and calls `confirm_connection`
+    /// 3. If capabilities match, connection is established
+    ///
+    /// # Arguments
+    ///
+    /// * `call_id` - The call to confirm
+    /// * `peer_capabilities` - Remote peer's media capabilities
+    ///
+    /// # Errors
+    ///
+    /// Returns error if call not found, capabilities incompatible, or
+    /// transport not connected.
+    #[tracing::instrument(skip(self, peer_capabilities), fields(call_id = %call_id))]
+    pub async fn confirm_connection(
+        &self,
+        call_id: CallId,
+        peer_capabilities: MediaCapabilities,
+    ) -> Result<(), CallError> {
+        let mut calls = self.calls.write().await;
+        let call = calls
+            .get_mut(&call_id)
+            .ok_or_else(|| CallError::CallNotFound(call_id.to_string()))?;
+
+        // Validate call is in Connecting state
+        if call.state != CallState::Connecting {
+            tracing::warn!(
+                "Cannot confirm connection for call {} in state {:?}",
+                call_id,
+                call.state
+            );
+            return Err(CallError::InvalidState);
+        }
+
+        // Validate peer capabilities satisfy our constraints
+        if !peer_capabilities.satisfies(&call.constraints) {
+            tracing::warn!(
+                call_id = %call_id,
+                peer_audio = peer_capabilities.audio,
+                peer_video = peer_capabilities.video,
+                required_audio = call.constraints.audio,
+                required_video = call.constraints.video,
+                "Peer capabilities do not satisfy call constraints"
+            );
+            return Err(CallError::ConfigError(
+                "Peer capabilities do not satisfy call constraints".to_string(),
+            ));
+        }
+
+        // Verify QuicMediaTransport is connected
+        if let Some(ref transport) = call.media_transport {
+            let transport_state = transport.state().await;
+            if transport_state != MediaTransportState::Connected {
+                tracing::warn!(
+                    call_id = %call_id,
+                    transport_state = ?transport_state,
+                    "Transport is not connected"
+                );
+                return Err(CallError::TransportError(
+                    "Transport is not connected".to_string(),
+                ));
+            }
+        } else {
+            return Err(CallError::ConfigError(
+                "Call has no media transport".to_string(),
+            ));
+        }
+
+        // Update call state to Connected
+        call.state = CallState::Connected;
+        tracing::debug!(
+            call_id = %call_id,
+            "Call state transition: Connecting -> Connected"
+        );
+
+        // Emit ConnectionEstablished event
+        let _ = self
+            .event_sender
+            .send(CallEvent::ConnectionEstablished { call_id });
+
+        tracing::info!(
+            call_id = %call_id,
+            peer_audio = peer_capabilities.audio,
+            peer_video = peer_capabilities.video,
+            "Connection confirmed"
+        );
+
+        Ok(())
+    }
+
     /// Subscribe to call events
     #[must_use]
     pub fn subscribe_events(&self) -> broadcast::Receiver<CallEvent<I>> {
@@ -1367,6 +1464,140 @@ mod tests {
         let result = call_manager.exchange_capabilities(call_id).await;
 
         assert!(matches!(result, Err(CallError::InvalidState)));
+    }
+
+    #[tokio::test]
+    async fn test_confirm_connection() {
+        let config = CallManagerConfig::default();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
+
+        let callee = PeerIdentityString::new("callee");
+        let constraints = MediaConstraints::audio_only();
+        let peer = test_peer();
+
+        // Create a QUIC call (starts in Connecting with connected transport)
+        let call_id = call_manager
+            .initiate_quic_call(callee, constraints, peer)
+            .await
+            .unwrap();
+
+        // Confirm connection with matching capabilities
+        let peer_caps = MediaCapabilities::audio_only();
+        let result = call_manager.confirm_connection(call_id, peer_caps).await;
+
+        assert!(result.is_ok());
+
+        // Verify state is Connected
+        let state = call_manager.get_call_state(call_id).await;
+        assert_eq!(state, Some(CallState::Connected));
+    }
+
+    #[tokio::test]
+    async fn test_confirm_connection_incompatible_caps() {
+        let config = CallManagerConfig::default();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
+
+        let callee = PeerIdentityString::new("callee");
+        let constraints = MediaConstraints::video_call(); // Requires video
+        let peer = test_peer();
+
+        let call_id = call_manager
+            .initiate_quic_call(callee, constraints, peer)
+            .await
+            .unwrap();
+
+        // Try to confirm with audio-only capabilities (missing video)
+        let peer_caps = MediaCapabilities::audio_only();
+        let result = call_manager.confirm_connection(call_id, peer_caps).await;
+
+        assert!(matches!(result, Err(CallError::ConfigError(_))));
+    }
+
+    #[tokio::test]
+    async fn test_confirm_connection_not_found() {
+        let config = CallManagerConfig::default();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
+
+        let fake_call_id = CallId::new();
+        let peer_caps = MediaCapabilities::audio_only();
+
+        let result = call_manager
+            .confirm_connection(fake_call_id, peer_caps)
+            .await;
+
+        assert!(matches!(result, Err(CallError::CallNotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn test_confirm_connection_invalid_state() {
+        let config = CallManagerConfig::default();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
+
+        let callee = PeerIdentityString::new("callee");
+        let constraints = MediaConstraints::audio_only();
+
+        // Create a regular call (not QUIC, starts in Calling state)
+        let call_id = call_manager
+            .initiate_call(callee, constraints)
+            .await
+            .unwrap();
+
+        // Try to confirm connection in Calling state - should fail
+        let peer_caps = MediaCapabilities::audio_only();
+        let result = call_manager.confirm_connection(call_id, peer_caps).await;
+
+        assert!(matches!(result, Err(CallError::InvalidState)));
+    }
+
+    #[tokio::test]
+    async fn test_confirm_connection_emits_event() {
+        let config = CallManagerConfig::default();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
+
+        // Subscribe to events before initiating call
+        let mut event_rx = call_manager.subscribe_events();
+
+        let callee = PeerIdentityString::new("callee");
+        let constraints = MediaConstraints::audio_only();
+        let peer = test_peer();
+
+        let call_id = call_manager
+            .initiate_quic_call(callee, constraints, peer)
+            .await
+            .unwrap();
+
+        // Drain the CallInitiated event
+        let _ = event_rx.try_recv();
+
+        // Confirm connection
+        let peer_caps = MediaCapabilities::audio_only();
+        call_manager
+            .confirm_connection(call_id, peer_caps)
+            .await
+            .unwrap();
+
+        // Verify ConnectionEstablished event was emitted
+        let event = event_rx.try_recv();
+        assert!(event.is_ok());
+
+        match event {
+            Ok(CallEvent::ConnectionEstablished { call_id: eid }) => {
+                assert_eq!(eid, call_id);
+            }
+            other => {
+                unreachable!("Expected ConnectionEstablished event, got: {:?}", other);
+            }
+        }
     }
 
     /// Test that verifies PeerIdentity type safety is preserved across all methods
