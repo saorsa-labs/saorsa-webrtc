@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "project": "unified-quic-media-transport",
+  "active": true,
+  "milestone": {
+    "number": 1,
+    "name": "Dependency Upgrade & Foundation",
+    "phases_total": 3,
+    "phases_complete": 0
+  },
+  "phase": {
+    "number": "1.1",
+    "name": "Dependency Audit & Upgrade",
+    "plan": "PLAN-phase-1.1.md",
+    "status": "executing"
+  },
+  "progress": {
+    "total_tasks": 6,
+    "completed_tasks": 6,
+    "current_task": null
+  },
+  "status": "completed",
+  "last_updated": "2026-01-25T13:35:00Z",
+  "last_action": "phase_1_1_complete"
+}
