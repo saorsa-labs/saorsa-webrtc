@@ -328,7 +328,9 @@ impl WebRtcQuicBridge {
         }
     }
 
-    /// Send RTP packet over QUIC
+    /// Send RTP packet over QUIC with stream type tagging
+    ///
+    /// Encodes the packet with a stream type tag prefix for proper routing.
     ///
     /// # Errors
     ///
@@ -348,7 +350,7 @@ impl WebRtcQuicBridge {
             .ok_or_else(|| BridgeError::ConfigError("No transport configured".to_string()))?;
 
         let data = packet
-            .to_bytes()
+            .to_tagged_bytes()
             .map_err(|e| BridgeError::StreamError(format!("Failed to serialize packet: {}", e)))?;
 
         if data.len() > self.config.max_packet_size {
@@ -364,16 +366,18 @@ impl WebRtcQuicBridge {
             .await
             .map_err(|e| BridgeError::StreamError(format!("Failed to send packet: {}", e)))?;
 
-        tracing::debug!("Sent RTP packet of size {} bytes", data.len());
+        tracing::debug!("Sent RTP packet of size {} bytes with type tag 0x{:02X}", data.len(), packet.stream_type.to_tag());
 
         Ok(())
     }
 
-    /// Receive RTP packet from QUIC
+    /// Receive RTP packet from QUIC with stream type tagging
+    ///
+    /// Parses stream type from the tag prefix for proper routing.
     ///
     /// # Errors
     ///
-    /// Returns error if receiving fails
+    /// Returns error if receiving fails or tag is invalid
     pub async fn receive_rtp_packet(&self) -> Result<RtpPacket, BridgeError> {
         let span = tracing::debug_span!("receive_rtp_packet");
         let _enter = span.enter();
@@ -388,8 +392,8 @@ impl WebRtcQuicBridge {
             .await
             .map_err(|e| BridgeError::StreamError(format!("Failed to receive: {}", e)))?;
 
-        let packet = RtpPacket::from_bytes(&data).map_err(|e| {
-            BridgeError::StreamError(format!("Failed to deserialize packet: {}", e))
+        let packet = RtpPacket::from_tagged_bytes(&data).map_err(|e| {
+            BridgeError::StreamError(format!("Failed to deserialize packet with tag: {}", e))
         })?;
 
         tracing::debug!(
@@ -534,5 +538,75 @@ mod tests {
     fn test_tagged_bytes_empty() {
         let result = RtpPacket::from_tagged_bytes(&[]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_stream_type_priority() {
+        assert_eq!(StreamType::Audio.priority(), 1);
+        assert_eq!(StreamType::Video.priority(), 2);
+        assert_eq!(StreamType::ScreenShare.priority(), 3);
+        assert_eq!(StreamType::Data.priority(), 4);
+
+        // Audio should have higher priority (lower value) than video
+        assert!(StreamType::Audio.priority() < StreamType::Video.priority());
+        assert!(StreamType::Video.priority() < StreamType::Data.priority());
+    }
+
+    #[test]
+    fn test_stream_type_is_realtime() {
+        assert!(StreamType::Audio.is_realtime());
+        assert!(StreamType::Video.is_realtime());
+        assert!(StreamType::ScreenShare.is_realtime());
+        assert!(!StreamType::Data.is_realtime());
+    }
+
+    #[test]
+    fn test_tagged_bytes_all_stream_types() {
+        for (stream_type, expected_tag) in &[
+            (StreamType::Audio, stream_tags::AUDIO),
+            (StreamType::Video, stream_tags::VIDEO),
+            (StreamType::ScreenShare, stream_tags::SCREEN_SHARE),
+            (StreamType::Data, stream_tags::DATA),
+        ] {
+            let packet = RtpPacket::new(
+                96,
+                1000,
+                10000,
+                0x12345678,
+                vec![0x01, 0x02],
+                *stream_type,
+            )
+            .expect("Failed to create packet");
+
+            let tagged = packet.to_tagged_bytes().expect("Failed to tag");
+            assert_eq!(tagged[0], *expected_tag, "Tag mismatch for {:?}", stream_type);
+
+            let restored = RtpPacket::from_tagged_bytes(&tagged).expect("Failed to restore");
+            assert_eq!(restored.stream_type, *stream_type, "Type mismatch for {:?}", stream_type);
+        }
+    }
+
+    #[test]
+    fn test_tagged_bytes_preserves_payload() {
+        let original_payload = vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06];
+        let packet = RtpPacket::new(
+            96,
+            1000,
+            10000,
+            0x12345678,
+            original_payload.clone(),
+            StreamType::Audio,
+        )
+        .expect("Failed to create packet");
+
+        let tagged = packet.to_tagged_bytes().expect("Failed to tag");
+        let restored = RtpPacket::from_tagged_bytes(&tagged).expect("Failed to restore");
+
+        assert_eq!(restored.payload, original_payload);
+        assert_eq!(restored.version, 2);
+        assert_eq!(restored.payload_type, 96);
+        assert_eq!(restored.sequence_number, 1000);
+        assert_eq!(restored.timestamp, 10000);
+        assert_eq!(restored.ssrc, 0x12345678);
     }
 }
