@@ -87,10 +87,14 @@ pub trait SignalingTransport: Send + Sync {
 }
 
 /// Signaling message types
+///
+/// Supports both legacy WebRTC (SDP/ICE) and QUIC-native (capability exchange) signaling.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum SignalingMessage {
-    /// SDP offer
+    // === Legacy WebRTC Messages (deprecated for new calls) ===
+    /// SDP offer (legacy WebRTC)
+    #[serde(rename = "offer")]
     Offer {
         /// Session ID
         session_id: String,
@@ -100,7 +104,8 @@ pub enum SignalingMessage {
         quic_endpoint: Option<SocketAddr>,
     },
 
-    /// SDP answer
+    /// SDP answer (legacy WebRTC)
+    #[serde(rename = "answer")]
     Answer {
         /// Session ID
         session_id: String,
@@ -110,7 +115,8 @@ pub enum SignalingMessage {
         quic_endpoint: Option<SocketAddr>,
     },
 
-    /// ICE candidate
+    /// ICE candidate (legacy WebRTC)
+    #[serde(rename = "ice_candidate")]
     IceCandidate {
         /// Session ID
         session_id: String,
@@ -122,13 +128,64 @@ pub enum SignalingMessage {
         sdp_mline_index: Option<u16>,
     },
 
-    /// ICE gathering complete
+    /// ICE gathering complete (legacy WebRTC)
+    #[serde(rename = "ice_complete")]
     IceComplete {
         /// Session ID
         session_id: String,
     },
 
+    // === QUIC-Native Messages ===
+    /// Capability exchange (QUIC-native)
+    ///
+    /// Sent instead of SDP offer. Contains local media capabilities.
+    #[serde(rename = "capability_exchange")]
+    CapabilityExchange {
+        /// Session/call ID
+        session_id: String,
+        /// Local media capabilities
+        audio: bool,
+        /// Video capability
+        video: bool,
+        /// Data channel capability
+        data_channel: bool,
+        /// Maximum bandwidth in kbps
+        max_bandwidth_kbps: u32,
+        /// QUIC endpoint for direct connection
+        quic_endpoint: Option<SocketAddr>,
+    },
+
+    /// Connection confirmation (QUIC-native)
+    ///
+    /// Sent in response to CapabilityExchange to confirm connection is ready.
+    #[serde(rename = "connection_confirm")]
+    ConnectionConfirm {
+        /// Session/call ID
+        session_id: String,
+        /// Peer's media capabilities (for mutual agreement)
+        audio: bool,
+        /// Video capability
+        video: bool,
+        /// Data channel capability
+        data_channel: bool,
+        /// Maximum bandwidth in kbps
+        max_bandwidth_kbps: u32,
+        /// QUIC endpoint for direct connection
+        quic_endpoint: Option<SocketAddr>,
+    },
+
+    /// Connection ready notification (QUIC-native)
+    ///
+    /// Sent when QUIC connection is established and media can flow.
+    #[serde(rename = "connection_ready")]
+    ConnectionReady {
+        /// Session/call ID
+        session_id: String,
+    },
+
+    // === Common Messages ===
     /// Close session
+    #[serde(rename = "bye")]
     Bye {
         /// Session ID
         session_id: String,
@@ -142,12 +199,41 @@ impl SignalingMessage {
     #[must_use]
     pub fn session_id(&self) -> &str {
         match self {
+            // Legacy WebRTC
             Self::Offer { session_id, .. }
             | Self::Answer { session_id, .. }
             | Self::IceCandidate { session_id, .. }
             | Self::IceComplete { session_id }
+            // QUIC-native
+            | Self::CapabilityExchange { session_id, .. }
+            | Self::ConnectionConfirm { session_id, .. }
+            | Self::ConnectionReady { session_id }
+            // Common
             | Self::Bye { session_id, .. } => session_id,
         }
+    }
+
+    /// Check if this is a QUIC-native message
+    #[must_use]
+    pub fn is_quic_native(&self) -> bool {
+        matches!(
+            self,
+            Self::CapabilityExchange { .. }
+                | Self::ConnectionConfirm { .. }
+                | Self::ConnectionReady { .. }
+        )
+    }
+
+    /// Check if this is a legacy WebRTC message
+    #[must_use]
+    pub fn is_legacy_webrtc(&self) -> bool {
+        matches!(
+            self,
+            Self::Offer { .. }
+                | Self::Answer { .. }
+                | Self::IceCandidate { .. }
+                | Self::IceComplete { .. }
+        )
     }
 }
 
@@ -288,10 +374,16 @@ impl<T: SignalingTransport> SignalingHandler<T> {
 /// Helper function to extract message type for tracing
 fn message_type(msg: &SignalingMessage) -> &'static str {
     match msg {
+        // Legacy WebRTC
         SignalingMessage::Offer { .. } => "Offer",
         SignalingMessage::Answer { .. } => "Answer",
         SignalingMessage::IceCandidate { .. } => "IceCandidate",
         SignalingMessage::IceComplete { .. } => "IceComplete",
+        // QUIC-native
+        SignalingMessage::CapabilityExchange { .. } => "CapabilityExchange",
+        SignalingMessage::ConnectionConfirm { .. } => "ConnectionConfirm",
+        SignalingMessage::ConnectionReady { .. } => "ConnectionReady",
+        // Common
         SignalingMessage::Bye { .. } => "Bye",
     }
 }
@@ -456,5 +548,104 @@ mod tests {
         };
 
         assert_eq!(answer.session_id(), "sess-123");
+    }
+
+    #[test]
+    fn test_capability_exchange_message() {
+        let cap_exchange = SignalingMessage::CapabilityExchange {
+            session_id: "quic-sess-1".to_string(),
+            audio: true,
+            video: true,
+            data_channel: false,
+            max_bandwidth_kbps: 2500,
+            quic_endpoint: Some("192.168.1.100:4433".parse().unwrap()),
+        };
+
+        assert_eq!(cap_exchange.session_id(), "quic-sess-1");
+        assert!(cap_exchange.is_quic_native());
+        assert!(!cap_exchange.is_legacy_webrtc());
+    }
+
+    #[test]
+    fn test_connection_confirm_message() {
+        let confirm = SignalingMessage::ConnectionConfirm {
+            session_id: "quic-sess-1".to_string(),
+            audio: true,
+            video: true,
+            data_channel: false,
+            max_bandwidth_kbps: 2500,
+            quic_endpoint: Some("192.168.1.101:4433".parse().unwrap()),
+        };
+
+        assert_eq!(confirm.session_id(), "quic-sess-1");
+        assert!(confirm.is_quic_native());
+        assert!(!confirm.is_legacy_webrtc());
+    }
+
+    #[test]
+    fn test_connection_ready_message() {
+        let ready = SignalingMessage::ConnectionReady {
+            session_id: "quic-sess-1".to_string(),
+        };
+
+        assert_eq!(ready.session_id(), "quic-sess-1");
+        assert!(ready.is_quic_native());
+        assert!(!ready.is_legacy_webrtc());
+    }
+
+    #[test]
+    fn test_legacy_message_detection() {
+        let offer = SignalingMessage::Offer {
+            session_id: "legacy-1".to_string(),
+            sdp: "v=0".to_string(),
+            quic_endpoint: None,
+        };
+
+        assert!(offer.is_legacy_webrtc());
+        assert!(!offer.is_quic_native());
+
+        let ice = SignalingMessage::IceCandidate {
+            session_id: "legacy-1".to_string(),
+            candidate: "candidate:1".to_string(),
+            sdp_mid: None,
+            sdp_mline_index: None,
+        };
+
+        assert!(ice.is_legacy_webrtc());
+        assert!(!ice.is_quic_native());
+    }
+
+    #[test]
+    fn test_bye_message_classification() {
+        let bye = SignalingMessage::Bye {
+            session_id: "any-1".to_string(),
+            reason: Some("user ended call".to_string()),
+        };
+
+        assert_eq!(bye.session_id(), "any-1");
+        // Bye is neither legacy nor QUIC-native specific
+        assert!(!bye.is_legacy_webrtc());
+        assert!(!bye.is_quic_native());
+    }
+
+    #[test]
+    fn test_capability_exchange_serialization() {
+        let msg = SignalingMessage::CapabilityExchange {
+            session_id: "test".to_string(),
+            audio: true,
+            video: false,
+            data_channel: true,
+            max_bandwidth_kbps: 1000,
+            quic_endpoint: None,
+        };
+
+        let serialized = serde_json::to_string(&msg).unwrap();
+        assert!(serialized.contains("\"type\":\"capability_exchange\""));
+        assert!(serialized.contains("\"audio\":true"));
+        assert!(serialized.contains("\"video\":false"));
+        assert!(serialized.contains("\"data_channel\":true"));
+
+        let deserialized: SignalingMessage = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(deserialized, msg);
     }
 }

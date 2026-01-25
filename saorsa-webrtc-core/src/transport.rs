@@ -516,7 +516,9 @@ fn validate_signaling_message(message: &SignalingMessage) -> Result<(), Transpor
                 )));
             }
         }
-        SignalingMessage::IceComplete { session_id } | SignalingMessage::Bye { session_id, .. } => {
+        SignalingMessage::IceComplete { session_id }
+        | SignalingMessage::Bye { session_id, .. }
+        | SignalingMessage::ConnectionReady { session_id } => {
             if session_id.len() > MAX_SESSION_ID_LENGTH {
                 return Err(TransportError::ReceiveError(format!(
                     "Session ID length {} exceeds maximum of {}",
@@ -524,6 +526,19 @@ fn validate_signaling_message(message: &SignalingMessage) -> Result<(), Transpor
                     MAX_SESSION_ID_LENGTH
                 )));
             }
+        }
+        // QUIC-native capability exchange messages
+        SignalingMessage::CapabilityExchange { session_id, .. }
+        | SignalingMessage::ConnectionConfirm { session_id, .. } => {
+            if session_id.len() > MAX_SESSION_ID_LENGTH {
+                return Err(TransportError::ReceiveError(format!(
+                    "Session ID length {} exceeds maximum of {}",
+                    session_id.len(),
+                    MAX_SESSION_ID_LENGTH
+                )));
+            }
+            // Capability fields are bounded by their types (bool, u32)
+            // so no additional length validation needed
         }
     }
     Ok(())
