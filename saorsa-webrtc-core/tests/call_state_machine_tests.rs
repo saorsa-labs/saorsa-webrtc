@@ -126,6 +126,7 @@ async fn concurrent_call_limit_is_enforced() {
 }
 
 #[tokio::test]
+#[allow(deprecated)]
 async fn call_manager_errors_on_non_existent_calls() {
     let mgr = CallManager::<PeerIdentityString>::new(CallManagerConfig::default())
         .await
@@ -152,6 +153,7 @@ async fn call_manager_errors_on_non_existent_calls() {
         mgr.handle_answer(fake, "x".to_string()).await,
         Err(CallError::CallNotFound(_))
     ));
+    // Legacy ICE methods (deprecated)
     assert!(matches!(
         mgr.add_ice_candidate(fake, "x".to_string()).await,
         Err(CallError::CallNotFound(_))

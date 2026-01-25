@@ -439,18 +439,28 @@ impl<I: PeerIdentity> CallManager<I> {
         }
     }
 
-    /// Add ICE candidate to a call
+    /// Add ICE candidate to a call (legacy WebRTC only)
+    ///
+    /// **Deprecated**: This method is for legacy WebRTC calls only.
+    /// QUIC-native calls do not use ICE candidates - connection is handled
+    /// automatically by the QuicMediaTransport.
+    ///
+    /// For QUIC calls, use `exchange_capabilities` and `confirm_connection` instead.
     ///
     /// # Errors
     ///
     /// Returns error if candidate cannot be added
+    #[deprecated(
+        since = "0.3.0",
+        note = "Use QUIC-native call flow (exchange_capabilities/confirm_connection) instead. ICE is only for legacy WebRTC calls."
+    )]
     #[tracing::instrument(skip(self, candidate), fields(call_id = %call_id))]
     pub async fn add_ice_candidate(
         &self,
         call_id: CallId,
         candidate: String,
     ) -> Result<(), CallError> {
-        tracing::trace!("Adding ICE candidate");
+        tracing::trace!("Adding ICE candidate (legacy WebRTC)");
 
         let calls = self.calls.read().await;
         if let Some(call) = calls.get(&call_id) {
@@ -472,11 +482,21 @@ impl<I: PeerIdentity> CallManager<I> {
         }
     }
 
-    /// Start ICE gathering for a call
+    /// Start ICE gathering for a call (legacy WebRTC only)
+    ///
+    /// **Deprecated**: This method is for legacy WebRTC calls only.
+    /// QUIC-native calls do not use ICE - connection is handled automatically
+    /// by the QuicMediaTransport.
+    ///
+    /// For QUIC calls, use `exchange_capabilities` and `confirm_connection` instead.
     ///
     /// # Errors
     ///
     /// Returns error if gathering cannot be started
+    #[deprecated(
+        since = "0.3.0",
+        note = "Use QUIC-native call flow (exchange_capabilities/confirm_connection) instead. ICE is only for legacy WebRTC calls."
+    )]
     pub async fn start_ice_gathering(&self, call_id: CallId) -> Result<(), CallError> {
         let calls = self.calls.read().await;
         if let Some(_call) = calls.get(&call_id) {
@@ -1035,7 +1055,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_call_manager_add_ice_candidate() {
+    #[allow(deprecated)]
+    async fn test_call_manager_add_ice_candidate_legacy() {
         let config = CallManagerConfig::default();
         let call_manager = CallManager::<PeerIdentityString>::new(config)
             .await
@@ -1049,7 +1070,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Test with a dummy ICE candidate
+        // Test with a dummy ICE candidate (legacy WebRTC only)
         let candidate = "candidate:1 1 UDP 2122260223 192.168.1.1 12345 typ host".to_string();
         let result = call_manager.add_ice_candidate(call_id, candidate).await;
         // This might fail in test environment, but should not panic
@@ -1058,7 +1079,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_call_manager_start_ice_gathering() {
+    #[allow(deprecated)]
+    async fn test_call_manager_start_ice_gathering_legacy() {
         let config = CallManagerConfig::default();
         let call_manager = CallManager::<PeerIdentityString>::new(config)
             .await
@@ -1072,6 +1094,7 @@ mod tests {
             .await
             .unwrap();
 
+        // Legacy WebRTC ICE gathering
         let result = call_manager.start_ice_gathering(call_id).await;
         // This might fail in test environment, but should not panic
         assert!(result.is_ok() || matches!(result, Err(CallError::ConfigError(_))));
@@ -1105,11 +1128,13 @@ mod tests {
             .await;
         assert!(matches!(result, Err(CallError::CallNotFound(_))));
 
+        #[allow(deprecated)]
         let result = call_manager
             .add_ice_candidate(fake_call_id, "dummy".to_string())
             .await;
         assert!(matches!(result, Err(CallError::CallNotFound(_))));
 
+        #[allow(deprecated)]
         let result = call_manager.start_ice_gathering(fake_call_id).await;
         assert!(matches!(result, Err(CallError::CallNotFound(_))));
     }

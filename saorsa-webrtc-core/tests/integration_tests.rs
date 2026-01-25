@@ -257,6 +257,7 @@ async fn test_call_constraints_integration() {
 }
 
 #[tokio::test]
+#[allow(deprecated)]
 async fn test_error_handling_integration() {
     let call_config = CallManagerConfig::default();
     let call_manager = CallManager::<PeerIdentityString>::new(call_config)
@@ -273,6 +274,7 @@ async fn test_error_handling_integration() {
     assert!(call_manager.reject_call(fake_call_id).await.is_err());
     assert!(call_manager.end_call(fake_call_id).await.is_err());
     assert!(call_manager.create_offer(fake_call_id).await.is_err());
+    // Legacy ICE methods (deprecated)
     assert!(call_manager
         .add_ice_candidate(fake_call_id, "dummy".to_string())
         .await

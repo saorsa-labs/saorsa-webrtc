@@ -40,7 +40,9 @@ async fn handle_answer_rejects_malformed_sdp() {
 }
 
 #[tokio::test]
+#[allow(deprecated)]
 async fn add_ice_candidate_handles_empty() {
+    // Tests legacy ICE method with empty candidate
     let mgr = CallManager::<PeerIdentityString>::new(CallManagerConfig::default())
         .await
         .unwrap();
@@ -57,7 +59,9 @@ async fn add_ice_candidate_handles_empty() {
 }
 
 #[tokio::test]
+#[allow(deprecated)]
 async fn add_ice_candidate_handles_garbage() {
+    // Tests legacy ICE method with garbage data
     let mgr = CallManager::<PeerIdentityString>::new(CallManagerConfig::default())
         .await
         .unwrap();
