@@ -785,6 +785,7 @@ impl QuicMediaTransport {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod stream_tests {
     use super::*;
 
@@ -1014,6 +1015,7 @@ pub mod framing {
     }
 
     #[cfg(test)]
+    #[allow(clippy::unwrap_used)]
     mod framing_tests {
         use super::*;
 
@@ -1135,6 +1137,7 @@ pub mod framing {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod rtp_tests {
     use super::framing::*;
 
@@ -1414,6 +1417,7 @@ impl QuicMediaTransport {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod send_recv_tests {
     use super::*;
 
@@ -1846,6 +1850,7 @@ impl QuicMediaTransport {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod priority_tests {
     use super::*;
 
