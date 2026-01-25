@@ -5,7 +5,7 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use saorsa_transport::{PeerId, ProtocolHandler, StreamType, TransportResult};
+use ant_quic::{PeerId, ProtocolHandler, StreamType, LinkResult as TransportResult, LinkError as TransportError};
 use std::collections::HashMap;
 use thiserror::Error;
 use tokio::sync::{mpsc, RwLock};
@@ -159,7 +159,7 @@ impl WebRtcProtocolHandler {
 
         // Deserialize the signaling message
         let message: SignalingMessage = serde_json::from_slice(&data).map_err(|e| {
-            saorsa_transport::TransportError::StreamError(format!(
+            TransportError::Internal(format!(
                 "Failed to deserialize signaling message: {}",
                 e
             ))
@@ -184,7 +184,7 @@ impl WebRtcProtocolHandler {
             .send(WebRtcIncoming::Signal { peer, message })
             .await
             .map_err(|e| {
-                saorsa_transport::TransportError::StreamError(format!(
+                TransportError::Internal(format!(
                     "Failed to send to signal channel: {}",
                     e
                 ))
@@ -200,7 +200,7 @@ impl WebRtcProtocolHandler {
 
         // Deserialize the RTP packet
         let packet = RtpPacket::from_bytes(&data).map_err(|e| {
-            saorsa_transport::TransportError::StreamError(format!(
+            TransportError::Internal(format!(
                 "Failed to deserialize RTP packet: {}",
                 e
             ))
@@ -231,7 +231,7 @@ impl WebRtcProtocolHandler {
                 warn!(peer = ?peer, "Media channel full, dropping packet");
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
-                return Err(saorsa_transport::TransportError::Shutdown);
+                return Err(TransportError::Shutdown);
             }
         }
 
@@ -245,7 +245,7 @@ impl WebRtcProtocolHandler {
 
         // Data channel format: 4-byte channel ID + payload
         if data.len() < 4 {
-            return Err(saorsa_transport::TransportError::StreamError(
+            return Err(TransportError::Internal(
                 "Data channel message too short".into(),
             ));
         }
@@ -280,7 +280,7 @@ impl WebRtcProtocolHandler {
             })
             .await
             .map_err(|e| {
-                saorsa_transport::TransportError::StreamError(format!(
+                TransportError::Internal(format!(
                     "Failed to send to data channel: {}",
                     e
                 ))
@@ -326,7 +326,7 @@ impl ProtocolHandler for WebRtcProtocolHandler {
     ) -> TransportResult<Option<Bytes>> {
         // Check shutdown flag
         if *self.shutdown.read().await {
-            return Err(saorsa_transport::TransportError::Shutdown);
+            return Err(TransportError::Shutdown);
         }
 
         match stream_type {
@@ -335,9 +335,10 @@ impl ProtocolHandler for WebRtcProtocolHandler {
             StreamType::WebRtcData => self.handle_data(peer, data).await,
             _ => {
                 error!(stream_type = %stream_type, "Unexpected stream type in WebRTC handler");
-                Err(saorsa_transport::TransportError::UnknownStreamType(
-                    stream_type,
-                ))
+                Err(TransportError::Internal(format!(
+                    "Unknown stream type: {}",
+                    stream_type
+                )))
             }
         }
     }
