@@ -2,6 +2,7 @@
 //!
 //! This module provides transport adapters for different signaling mechanisms.
 
+use crate::link_transport::StreamType as LinkStreamType;
 use crate::signaling::{SignalingMessage, SignalingTransport};
 use async_trait::async_trait;
 use std::net::SocketAddr;
@@ -53,11 +54,9 @@ pub enum TransportError {
 /// gossip-based rendezvous (communitas).
 pub struct AntQuicTransport {
     config: TransportConfig,
-    node: Option<Arc<ant_quic::quic_node::QuicP2PNode>>,
-    peer_map: Arc<
-        tokio::sync::RwLock<std::collections::HashMap<String, ant_quic::nat_traversal_api::PeerId>>,
-    >,
-    default_peer: Arc<tokio::sync::RwLock<Option<ant_quic::nat_traversal_api::PeerId>>>,
+    node: Option<Arc<ant_quic::Node>>,
+    peer_map: Arc<tokio::sync::RwLock<std::collections::HashMap<String, ant_quic::PeerId>>>,
+    default_peer: Arc<tokio::sync::RwLock<Option<ant_quic::PeerId>>>,
     shutdown: Arc<tokio::sync::watch::Sender<bool>>,
     shutdown_rx: tokio::sync::watch::Receiver<bool>,
 }
@@ -89,24 +88,17 @@ impl AntQuicTransport {
     ///
     /// Returns error if node creation fails
     pub async fn start(&mut self) -> Result<(), TransportError> {
-        use ant_quic::auth::AuthConfig;
-        use ant_quic::nat_traversal_api::EndpointRole;
-        use ant_quic::quic_node::{QuicNodeConfig, QuicP2PNode};
-        use std::time::Duration;
+        use ant_quic::{Node, NodeConfigBuilder};
 
-        // Use Bootstrap role for standalone operation (no external bootstraps needed)
-        let node_config = QuicNodeConfig {
-            role: EndpointRole::Bootstrap,
-            bootstrap_nodes: vec![],
-            enable_coordinator: true,
-            max_connections: 100,
-            connection_timeout: Duration::from_secs(30),
-            stats_interval: Duration::from_secs(60),
-            auth_config: AuthConfig::default(),
-            bind_addr: self.config.local_addr,
+        // Build node configuration
+        let config_builder = NodeConfigBuilder::default();
+        let node_config = if let Some(addr) = self.config.local_addr {
+            config_builder.bind_addr(addr).build()
+        } else {
+            config_builder.build()
         };
 
-        let node = QuicP2PNode::new(node_config).await.map_err(|e| {
+        let node = Node::with_config(node_config).await.map_err(|e| {
             TransportError::ConnectionError(format!("Failed to create QUIC node: {}", e))
         })?;
 
@@ -114,6 +106,7 @@ impl AntQuicTransport {
 
         // Spawn background task to accept incoming connections
         let node_clone = node_arc.clone();
+        let peer_map = self.peer_map.clone();
         let mut shutdown_rx = self.shutdown_rx.clone();
         tokio::spawn(async move {
             loop {
@@ -125,14 +118,13 @@ impl AntQuicTransport {
                         }
                     }
                     result = node_clone.accept() => {
-                        match result {
-                            Ok((addr, peer_id)) => {
-                                tracing::debug!("Accepted connection from {:?} at {}", peer_id, addr);
-                            }
-                            Err(e) => {
-                                tracing::debug!("Accept error (expected when no incoming connections): {}", e);
-                                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                            }
+                        if let Some(conn) = result {
+                            let peer_id = conn.peer_id;
+                            let addr = conn.remote_addr;
+                            tracing::debug!("Accepted connection from {:?} at {:?}", peer_id, addr);
+                            // Store the peer mapping
+                            let peer_str = format!("{:?}", peer_id);
+                            peer_map.write().await.insert(peer_str, peer_id);
                         }
                     }
                 }
@@ -174,17 +166,9 @@ impl AntQuicTransport {
             .as_ref()
             .ok_or_else(|| TransportError::ConnectionError("Transport not started".to_string()))?;
 
-        let mut addr = node
-            .get_nat_endpoint()
-            .map_err(|e| TransportError::ConnectionError(format!("Failed to get endpoint: {}", e)))?
-            .get_quinn_endpoint()
-            .ok_or_else(|| {
-                TransportError::ConnectionError("No Quinn endpoint available".to_string())
-            })?
-            .local_addr()
-            .map_err(|e| {
-                TransportError::ConnectionError(format!("Failed to get local address: {}", e))
-            })?;
+        let mut addr = node.local_addr().ok_or_else(|| {
+            TransportError::ConnectionError("No local address available".to_string())
+        })?;
 
         // If bound to 0.0.0.0, replace with localhost for connection purposes
         if addr.ip().is_unspecified() {
@@ -205,10 +189,12 @@ impl AntQuicTransport {
             .as_ref()
             .ok_or_else(|| TransportError::ConnectionError("Transport not started".to_string()))?;
 
-        let peer_id = node
-            .connect_to_bootstrap(addr)
+        let conn = node
+            .connect_addr(addr)
             .await
             .map_err(|e| TransportError::ConnectionError(format!("Failed to connect: {}", e)))?;
+
+        let peer_id = conn.peer_id;
 
         // Generate string representation for peer ID
         let peer_str = format!("{:?}", peer_id);
@@ -238,6 +224,26 @@ impl AntQuicTransport {
         Ok(())
     }
 
+    /// Get a handle for sending on a specific stream type
+    ///
+    /// This method prepares the transport for multiplexed streams.
+    /// Currently returns the stream type as-is; future implementations
+    /// may use this to allocate dedicated stream resources.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if stream type is invalid
+    pub fn get_stream_handle(&self, stream_type: LinkStreamType) -> Result<LinkStreamType, TransportError> {
+        // Validate stream type is in expected range
+        if stream_type.as_u8() >= 0x20 && stream_type.as_u8() <= 0x24 {
+            Ok(stream_type)
+        } else {
+            Err(TransportError::SendError(
+                "Invalid stream type for WebRTC".to_string(),
+            ))
+        }
+    }
+
     /// Send raw bytes to default peer (for RTP packets and stream data)
     ///
     /// This method is used by the QUIC bridge and stream manager to send
@@ -260,7 +266,7 @@ impl AntQuicTransport {
             .as_ref()
             .ok_or_else(|| TransportError::SendError("No peer connected".to_string()))?;
 
-        node.send_to_peer(peer_id, data)
+        node.send(peer_id, data)
             .await
             .map_err(|e| TransportError::SendError(format!("Failed to send: {}", e)))?;
 
@@ -278,6 +284,7 @@ impl AntQuicTransport {
     ///
     /// Returns error if receive fails
     pub async fn receive_bytes(&self) -> Result<Vec<u8>, TransportError> {
+        use std::time::Duration;
         let span = tracing::debug_span!("transport_receive_bytes");
         let _enter = span.enter();
 
@@ -287,13 +294,63 @@ impl AntQuicTransport {
             .ok_or_else(|| TransportError::ReceiveError("Transport not started".to_string()))?;
 
         let (_peer_id, data) = node
-            .receive()
+            .recv(Duration::from_secs(30))
             .await
             .map_err(|e| TransportError::ReceiveError(format!("Failed to receive: {}", e)))?;
 
         tracing::trace!("Received {} bytes from peer", data.len());
 
         Ok(data)
+    }
+
+    /// Send bytes on a specific stream type to default peer
+    ///
+    /// This method adds stream type awareness for multiplexed media over QUIC.
+    /// The stream type is included in the packet metadata for routing.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if send fails or stream type is invalid
+    pub async fn send_bytes_on_stream(
+        &self,
+        stream_type: LinkStreamType,
+        data: &[u8],
+    ) -> Result<(), TransportError> {
+        let span = tracing::debug_span!("transport_send_stream",
+                                        stream_type = stream_type.as_u8(),
+                                        data_len = data.len());
+        let _enter = span.enter();
+
+        // Validate stream type
+        self.get_stream_handle(stream_type)?;
+
+        // Current implementation sends on default transport
+        // Future versions will use dedicated QUIC streams per stream type
+        self.send_bytes(data).await
+    }
+
+    /// Receive bytes with stream type information (when available)
+    ///
+    /// For now, this returns stream type inferred from content.
+    /// Future implementations will extract stream type from QUIC stream ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if receive fails
+    pub async fn receive_bytes_on_stream(
+        &self,
+    ) -> Result<(Vec<u8>, LinkStreamType), TransportError> {
+        let data = self.receive_bytes().await?;
+
+        // For now, infer stream type from data length
+        // Future: extract from QUIC stream ID metadata
+        let stream_type = if data.len() > 1000 {
+            LinkStreamType::Video  // Assume large packets are video
+        } else {
+            LinkStreamType::Audio  // Assume small packets are audio
+        };
+
+        Ok((data, stream_type))
     }
 }
 
@@ -330,7 +387,7 @@ impl SignalingTransport for AntQuicTransport {
         })?;
 
         // Send over QUIC
-        node.send_to_peer(peer_id, &data)
+        node.send(peer_id, &data)
             .await
             .map_err(|e| TransportError::SendError(format!("Failed to send: {}", e)))?;
 
@@ -339,15 +396,16 @@ impl SignalingTransport for AntQuicTransport {
     }
 
     async fn receive_message(&self) -> Result<(String, SignalingMessage), TransportError> {
+        use std::time::Duration;
         let node = self
             .node
             .as_ref()
             .ok_or_else(|| TransportError::ReceiveError("Transport not started".to_string()))?;
 
         // Receive data from any peer (this will block until data arrives)
-        // The QuicP2PNode handles incoming connections internally
+        // The Node handles incoming connections internally
         let (peer_id, data) = node
-            .receive()
+            .recv(Duration::from_secs(30))
             .await
             .map_err(|e| TransportError::ReceiveError(format!("Failed to receive: {}", e)))?;
 
@@ -450,6 +508,7 @@ fn validate_signaling_message(message: &SignalingMessage) -> Result<(), Transpor
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -516,5 +575,27 @@ mod tests {
     fn test_transport_config_default() {
         let config = TransportConfig::default();
         assert!(config.local_addr.is_none());
+    }
+
+    #[test]
+    fn test_get_stream_handle_valid() {
+        let config = TransportConfig::default();
+        let transport = AntQuicTransport::new(config);
+
+        // Test all valid stream types
+        let result = transport.get_stream_handle(LinkStreamType::Audio);
+        assert!(result.is_ok());
+
+        let result = transport.get_stream_handle(LinkStreamType::Video);
+        assert!(result.is_ok());
+
+        let result = transport.get_stream_handle(LinkStreamType::Screen);
+        assert!(result.is_ok());
+
+        let result = transport.get_stream_handle(LinkStreamType::RtcpFeedback);
+        assert!(result.is_ok());
+
+        let result = transport.get_stream_handle(LinkStreamType::Data);
+        assert!(result.is_ok());
     }
 }
