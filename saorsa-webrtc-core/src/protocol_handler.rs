@@ -656,3 +656,285 @@ mod tests {
         assert!(result.is_err());
     }
 }
+
+/// Stream routing for WebRTC media types
+///
+/// Provides mapping between packet types and QUIC stream types
+pub mod stream_routing {
+    use crate::link_transport::StreamType;
+
+    /// RTP payload types for audio codecs (96-127)
+    pub const AUDIO_PAYLOAD_TYPE_RANGE: (u8, u8) = (96, 127);
+
+    /// RTP payload types for video codecs (96-127)
+    pub const VIDEO_PAYLOAD_TYPE_RANGE: (u8, u8) = (96, 127);
+
+    /// RTCP payload types (200-211)
+    pub const RTCP_PAYLOAD_TYPE_RANGE: (u8, u8) = (200, 211);
+
+    /// Detect if a packet is RTP based on payload type
+    ///
+    /// # Arguments
+    ///
+    /// * `payload_type` - The RTP payload type (first 2 bits of first byte)
+    ///
+    /// # Returns
+    ///
+    /// `true` if this appears to be an RTP packet
+    pub fn is_rtp(payload_type: u8) -> bool {
+        payload_type < 128 || (96..=127).contains(&payload_type)
+    }
+
+    /// Detect if a packet is RTCP based on payload type
+    ///
+    /// # Arguments
+    ///
+    /// * `payload_type` - The RTCP payload type
+    ///
+    /// # Returns
+    ///
+    /// `true` if this appears to be an RTCP packet
+    pub fn is_rtcp(payload_type: u8) -> bool {
+        (200..=211).contains(&payload_type)
+    }
+
+    /// Detect if packet is audio based on codec hint
+    ///
+    /// # Arguments
+    ///
+    /// * `payload_type` - The RTP payload type
+    ///
+    /// # Returns
+    ///
+    /// `true` if this is likely an audio codec
+    pub fn is_audio_codec(payload_type: u8) -> bool {
+        // Dynamic payload types 96-127 need external SDP mapping
+        // But common audio PTs: 0-23 are static
+        matches!(
+            payload_type,
+            0 | 1 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19
+                | 25 | 97
+        )
+    }
+
+    /// Detect if packet is video based on codec hint
+    ///
+    /// # Arguments
+    ///
+    /// * `payload_type` - The RTP payload type
+    ///
+    /// # Returns
+    ///
+    /// `true` if this is likely a video codec
+    pub fn is_video_codec(payload_type: u8) -> bool {
+        // Common video PTs: 26, 32-34, 96-127 (dynamic), etc.
+        matches!(
+            payload_type,
+            26 | 32 | 33 | 34 | 96 | 97 | 98 | 99 | 100 | 101 | 102 | 103 | 104 | 105
+        )
+    }
+
+    /// Route media to appropriate stream based on type
+    ///
+    /// # Arguments
+    ///
+    /// * `payload_type` - The RTP/RTCP payload type
+    ///
+    /// # Returns
+    ///
+    /// The target `StreamType` for this packet
+    pub fn route_to_stream(payload_type: u8) -> StreamType {
+        if is_rtcp(payload_type) {
+            StreamType::RtcpFeedback
+        } else if is_audio_codec(payload_type) {
+            StreamType::Audio
+        } else if is_video_codec(payload_type) {
+            StreamType::Video
+        } else {
+            // Default to video for unknown dynamic types
+            StreamType::Video
+        }
+    }
+
+    /// Get all RTCP packet types
+    ///
+    /// # Returns
+    ///
+    /// A vector of all valid RTCP payload types
+    pub fn rtcp_feedback_types() -> Vec<u8> {
+        (200..=211).collect()
+    }
+
+    #[cfg(test)]
+    mod routing_tests {
+        use super::*;
+
+        #[test]
+        fn test_is_rtp() {
+            assert!(is_rtp(0));
+            assert!(is_rtp(96));
+            assert!(is_rtp(127));
+            assert!(!is_rtp(200));
+        }
+
+        #[test]
+        fn test_is_rtcp() {
+            assert!(is_rtcp(200));
+            assert!(is_rtcp(205));
+            assert!(is_rtcp(211));
+            assert!(!is_rtcp(199));
+            assert!(!is_rtcp(212));
+        }
+
+        #[test]
+        fn test_is_audio_codec() {
+            assert!(is_audio_codec(0)); // PCMU
+            assert!(is_audio_codec(8)); // PCMA
+            assert!(is_audio_codec(97)); // iLBC
+            assert!(!is_audio_codec(26)); // Video
+        }
+
+        #[test]
+        fn test_is_video_codec() {
+            assert!(is_video_codec(26)); // Motion JPEG
+            assert!(is_video_codec(32)); // MPV
+            assert!(is_video_codec(96)); // Dynamic
+            assert!(!is_video_codec(0)); // Audio
+        }
+
+        #[test]
+        fn test_route_to_stream_audio() {
+            let stream = route_to_stream(0); // PCMU
+            assert_eq!(stream, StreamType::Audio);
+        }
+
+        #[test]
+        fn test_route_to_stream_video() {
+            let stream = route_to_stream(26); // Motion JPEG
+            assert_eq!(stream, StreamType::Video);
+        }
+
+        #[test]
+        fn test_route_to_stream_rtcp() {
+            let stream = route_to_stream(200); // SR
+            assert_eq!(stream, StreamType::RtcpFeedback);
+        }
+
+        #[test]
+        fn test_rtcp_feedback_types() {
+            let types = rtcp_feedback_types();
+            assert_eq!(types.len(), 12);
+            assert_eq!(types[0], 200);
+            assert_eq!(types[11], 211);
+        }
+    }
+}
+
+impl WebRtcProtocolHandler {
+    /// Route an incoming packet to the correct stream type
+    ///
+    /// # Arguments
+    ///
+    /// * `payload` - The packet payload
+    ///
+    /// # Returns
+    ///
+    /// The target `StreamType` for this packet
+    pub fn route_packet_to_stream(payload: &[u8]) -> crate::link_transport::StreamType {
+        if payload.is_empty() {
+            return crate::link_transport::StreamType::Data;
+        }
+
+        // Extract payload type from RTP/RTCP header
+        // First check if this is RTCP (byte[1] >= 200)
+        if payload[1] >= 200 {
+            return crate::link_transport::StreamType::RtcpFeedback;
+        }
+
+        // For RTP, extract payload type from bits 1-7 of second byte
+        let pt = payload[1] & 0x7F;
+        stream_routing::route_to_stream(pt)
+    }
+
+    /// Get the media type for a stream
+    ///
+    /// # Arguments
+    ///
+    /// * `stream_type` - The stream type
+    ///
+    /// # Returns
+    ///
+    /// A description of the media type
+    pub fn stream_media_type(
+        stream_type: crate::link_transport::StreamType,
+    ) -> &'static str {
+        match stream_type {
+            crate::link_transport::StreamType::Audio => "Audio RTP",
+            crate::link_transport::StreamType::Video => "Video RTP",
+            crate::link_transport::StreamType::Screen => "Screen Share RTP",
+            crate::link_transport::StreamType::RtcpFeedback => "RTCP Feedback",
+            crate::link_transport::StreamType::Data => "Data Channel",
+        }
+    }
+}
+
+#[cfg(test)]
+mod routing_integration_tests {
+    use super::*;
+    use crate::link_transport::StreamType;
+
+    #[test]
+    fn test_route_packet_audio_rtp() {
+        // RTP packet with PCMU (PT=0)
+        let payload = vec![0x80, 0x00, 0x00, 0x01];
+        let stream = WebRtcProtocolHandler::route_packet_to_stream(&payload);
+        assert_eq!(stream, StreamType::Audio);
+    }
+
+    #[test]
+    fn test_route_packet_video_rtp() {
+        // RTP packet with Motion JPEG (PT=26)
+        let payload = vec![0x80, 0x1A, 0x00, 0x01];
+        let stream = WebRtcProtocolHandler::route_packet_to_stream(&payload);
+        assert_eq!(stream, StreamType::Video);
+    }
+
+    #[test]
+    fn test_route_packet_rtcp() {
+        // RTCP packet with SR (PT=200)
+        let payload = vec![0x80, 0xC8, 0x00, 0x01];
+        let stream = WebRtcProtocolHandler::route_packet_to_stream(&payload);
+        assert_eq!(stream, StreamType::RtcpFeedback);
+    }
+
+    #[test]
+    fn test_route_packet_empty() {
+        let payload: Vec<u8> = vec![];
+        let stream = WebRtcProtocolHandler::route_packet_to_stream(&payload);
+        assert_eq!(stream, StreamType::Data);
+    }
+
+    #[test]
+    fn test_stream_media_type_descriptions() {
+        assert_eq!(
+            WebRtcProtocolHandler::stream_media_type(StreamType::Audio),
+            "Audio RTP"
+        );
+        assert_eq!(
+            WebRtcProtocolHandler::stream_media_type(StreamType::Video),
+            "Video RTP"
+        );
+        assert_eq!(
+            WebRtcProtocolHandler::stream_media_type(StreamType::Screen),
+            "Screen Share RTP"
+        );
+        assert_eq!(
+            WebRtcProtocolHandler::stream_media_type(StreamType::RtcpFeedback),
+            "RTCP Feedback"
+        );
+        assert_eq!(
+            WebRtcProtocolHandler::stream_media_type(StreamType::Data),
+            "Data Channel"
+        );
+    }
+}

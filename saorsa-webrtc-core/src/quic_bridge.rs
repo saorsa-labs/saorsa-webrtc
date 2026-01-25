@@ -157,6 +157,43 @@ impl RtpPacket {
     pub fn size(&self) -> usize {
         12 + self.payload.len() // Basic RTP header is 12 bytes
     }
+
+    /// Serialize packet with stream type tag prefix
+    ///
+    /// Format: [1-byte stream type tag][serialized packet]
+    ///
+    /// # Errors
+    ///
+    /// Returns error if serialization fails
+    pub fn to_tagged_bytes(&self) -> Result<Vec<u8>> {
+        let tag = self.stream_type.to_tag();
+        let data = self.to_bytes()?;
+        let mut tagged = Vec::with_capacity(1 + data.len());
+        tagged.push(tag);
+        tagged.extend(data);
+        Ok(tagged)
+    }
+
+    /// Deserialize packet from tagged bytes
+    ///
+    /// Expects: [1-byte stream type tag][serialized packet]
+    ///
+    /// # Errors
+    ///
+    /// Returns error if deserialization fails or tag is invalid
+    pub fn from_tagged_bytes(data: &[u8]) -> Result<Self> {
+        if data.is_empty() {
+            return Err(anyhow::anyhow!("Cannot deserialize empty data"));
+        }
+
+        let tag = data[0];
+        let stream_type = StreamType::from_tag(tag)
+            .ok_or_else(|| anyhow::anyhow!("Invalid stream type tag: 0x{:02X}", tag))?;
+
+        let mut packet = Self::from_bytes(&data[1..])?;
+        packet.stream_type = stream_type;
+        Ok(packet)
+    }
 }
 
 /// Stream configuration for QUIC media streams
