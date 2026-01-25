@@ -524,6 +524,147 @@ fn validate_signaling_message(message: &SignalingMessage) -> Result<(), Transpor
     Ok(())
 }
 
+#[async_trait]
+impl crate::link_transport::LinkTransport for AntQuicTransport {
+    async fn start(&mut self) -> Result<(), crate::link_transport::LinkTransportError> {
+        AntQuicTransport::start(self)
+            .await
+            .map_err(|e| crate::link_transport::LinkTransportError::IoError(e.to_string()))
+    }
+
+    async fn stop(&mut self) -> Result<(), crate::link_transport::LinkTransportError> {
+        // Note: AntQuicTransport::stop() is synchronous, so we can call it directly
+        AntQuicTransport::stop(self)
+            .map_err(|e| crate::link_transport::LinkTransportError::IoError(e.to_string()))
+    }
+
+    async fn is_running(&self) -> bool {
+        self.is_connected().await
+    }
+
+    async fn local_addr(&self) -> Result<SocketAddr, crate::link_transport::LinkTransportError> {
+        AntQuicTransport::local_addr(self)
+            .await
+            .map_err(|e| crate::link_transport::LinkTransportError::IoError(e.to_string()))
+    }
+
+    async fn connect(&mut self, addr: SocketAddr) -> Result<crate::link_transport::PeerConnection, crate::link_transport::LinkTransportError> {
+        let peer_id_str = self
+            .connect_to_peer(addr)
+            .await
+            .map_err(|e| crate::link_transport::LinkTransportError::IoError(e.to_string()))?;
+
+        Ok(crate::link_transport::PeerConnection {
+            peer_id: peer_id_str,
+            remote_addr: addr,
+        })
+    }
+
+    async fn accept(&mut self) -> Result<Option<crate::link_transport::PeerConnection>, crate::link_transport::LinkTransportError> {
+        // Accept is handled in the background task spawned by start()
+        // Return None for now - actual connections are tracked via the peer_map
+        Ok(None)
+    }
+
+    async fn send(
+        &self,
+        peer: &crate::link_transport::PeerConnection,
+        stream_type: crate::link_transport::StreamType,
+        data: &[u8],
+    ) -> Result<(), crate::link_transport::LinkTransportError> {
+        // Create a framed message: [stream_type: 1 byte][length: 2 bytes][data]
+        let mut framed = Vec::with_capacity(3 + data.len());
+        framed.push(stream_type.as_u8());
+        framed.extend_from_slice(&(data.len() as u16).to_be_bytes());
+        framed.extend_from_slice(data);
+
+        let node = self
+            .node
+            .as_ref()
+            .ok_or(crate::link_transport::LinkTransportError::NotConnected)?;
+
+        // Look up peer_id from peer_map
+        let peer_map = self.peer_map.read().await;
+        let peer_id = peer_map
+            .get(&peer.peer_id)
+            .ok_or_else(|| crate::link_transport::LinkTransportError::PeerNotFound(peer.peer_id.clone()))?;
+
+        node.send(peer_id, &framed)
+            .await
+            .map_err(|e| crate::link_transport::LinkTransportError::SendError(e.to_string()))
+    }
+
+    async fn receive(&self) -> Result<(crate::link_transport::PeerConnection, crate::link_transport::StreamType, Vec<u8>), crate::link_transport::LinkTransportError> {
+        use std::time::Duration;
+
+        let node = self
+            .node
+            .as_ref()
+            .ok_or(crate::link_transport::LinkTransportError::NotConnected)?;
+
+        let (peer_id, data) = node
+            .recv(Duration::from_secs(30))
+            .await
+            .map_err(|e| crate::link_transport::LinkTransportError::ReceiveError(e.to_string()))?;
+
+        // Parse framed message: [stream_type: 1 byte][length: 2 bytes][data]
+        if data.len() < 3 {
+            return Err(crate::link_transport::LinkTransportError::ReceiveError(
+                "Framed message too short".to_string(),
+            ));
+        }
+
+        let stream_type_byte = data[0];
+        let stream_type = crate::link_transport::StreamType::try_from_u8(stream_type_byte)
+            .ok_or(crate::link_transport::LinkTransportError::InvalidStreamType(stream_type_byte))?;
+
+        let length = u16::from_be_bytes([data[1], data[2]]) as usize;
+        if 3 + length > data.len() {
+            return Err(crate::link_transport::LinkTransportError::ReceiveError(
+                "Invalid frame length".to_string(),
+            ));
+        }
+
+        let payload = data[3..3 + length].to_vec();
+
+        // Generate string representation for peer ID
+        let peer_str = format!("{:?}", peer_id);
+
+        // Update peer map if needed
+        let mut peer_map = self.peer_map.write().await;
+        peer_map.entry(peer_str.clone()).or_insert(peer_id);
+        drop(peer_map);
+
+        Ok((
+            crate::link_transport::PeerConnection {
+                peer_id: peer_str,
+                remote_addr: SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 0),
+            },
+            stream_type,
+            payload,
+        ))
+    }
+
+    fn default_peer(&self) -> Result<crate::link_transport::PeerConnection, crate::link_transport::LinkTransportError> {
+        // This is a blocking method, so we need to access the Arc directly
+        // In practice, this should be called only when we know a peer exists
+        // For now, return error - use async methods instead
+        Err(crate::link_transport::LinkTransportError::NotConnected)
+    }
+
+    fn set_default_peer(
+        &mut self,
+        peer: crate::link_transport::PeerConnection,
+    ) -> Result<(), crate::link_transport::LinkTransportError> {
+        // Note: This is a blocking method but we can't access async RwLock here
+        // We'd need to refactor the data structure or make this async in future
+        let _ = peer;
+        Err(crate::link_transport::LinkTransportError::NotConnected)
+    }
+}
+
+
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
