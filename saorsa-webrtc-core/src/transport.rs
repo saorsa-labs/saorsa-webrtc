@@ -155,6 +155,23 @@ impl AntQuicTransport {
         self.node.is_some()
     }
 
+    /// Get the underlying QUIC node for connection sharing
+    ///
+    /// This allows media transports to share the same QUIC connection
+    /// as signaling, enabling multiplexed streams over one connection.
+    ///
+    /// # Returns
+    ///
+    /// Reference to the Arc<Node> if connected, None if not started
+    ///
+    /// # Note
+    ///
+    /// The returned Arc can be cloned and used by media transport handlers.
+    /// Lifetimes are managed through Arc reference counting.
+    pub fn get_node(&self) -> Option<Arc<ant_quic::Node>> {
+        self.node.clone()
+    }
+
     /// Get local address
     ///
     /// # Errors

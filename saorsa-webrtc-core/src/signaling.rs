@@ -30,6 +30,18 @@ pub enum SignalingError {
 /// Signaling transport trait
 ///
 /// Implement this for your specific transport (DHT, gossip, etc.)
+///
+/// # Connection Sharing
+///
+/// For QUIC-based transports (like AntQuicTransport), the underlying connection
+/// can be shared with media transport handlers. This enables:
+///
+/// - Multiplexing signaling and media over a single QUIC connection
+/// - Stream-based media routing (different stream types for audio/video/data)
+/// - Reduced connection overhead and improved NAT traversal efficiency
+///
+/// To access the underlying connection for sharing, use transport-specific methods
+/// (e.g., `AntQuicTransport::get_node()` for ant-quic).
 #[async_trait]
 pub trait SignalingTransport: Send + Sync {
     /// Peer identifier type
@@ -244,6 +256,7 @@ fn message_type(msg: &SignalingMessage) -> &'static str {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use async_trait::async_trait;
