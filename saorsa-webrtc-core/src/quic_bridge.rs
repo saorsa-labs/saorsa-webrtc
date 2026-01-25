@@ -29,6 +29,8 @@ pub enum StreamType {
     Data,
     /// Screen sharing stream
     ScreenShare,
+    /// RTCP feedback stream for QoS
+    RtcpFeedback,
 }
 
 /// Stream type tag constants for QUIC streams
@@ -50,17 +52,18 @@ impl StreamType {
     #[must_use]
     pub const fn priority(&self) -> u8 {
         match self {
-            Self::Audio => 1, // Highest priority
+            Self::Audio => 1,        // Highest priority
+            Self::RtcpFeedback => 1, // RTCP is critical for QoS
             Self::Video => 2,
             Self::ScreenShare => 3,
-            Self::Data => 4, // Lowest priority
+            Self::Data => 4,         // Lowest priority
         }
     }
 
     /// Check if stream is real-time (audio/video)
     #[must_use]
     pub const fn is_realtime(&self) -> bool {
-        matches!(self, Self::Audio | Self::Video | Self::ScreenShare)
+        matches!(self, Self::Audio | Self::Video | Self::ScreenShare | Self::RtcpFeedback)
     }
 
     /// Convert to stream type tag byte for QUIC framing
@@ -70,6 +73,7 @@ impl StreamType {
             Self::Audio => stream_tags::AUDIO,
             Self::Video => stream_tags::VIDEO,
             Self::ScreenShare => stream_tags::SCREEN_SHARE,
+            Self::RtcpFeedback => stream_tags::RTCP_FEEDBACK,
             Self::Data => stream_tags::DATA,
         }
     }
@@ -83,6 +87,7 @@ impl StreamType {
             stream_tags::AUDIO => Some(Self::Audio),
             stream_tags::VIDEO => Some(Self::Video),
             stream_tags::SCREEN_SHARE => Some(Self::ScreenShare),
+            stream_tags::RTCP_FEEDBACK => Some(Self::RtcpFeedback),
             stream_tags::DATA => Some(Self::Data),
             _ => None,
         }
