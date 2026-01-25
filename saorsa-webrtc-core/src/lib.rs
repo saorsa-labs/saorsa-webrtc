@@ -81,9 +81,13 @@ pub mod protocol_handler;
 /// Peer identity abstraction
 pub mod identity;
 
+/// Link transport abstraction layer
+pub mod link_transport;
+
 // Re-export main types at crate root
 pub use call::{CallManager, CallManagerConfig};
 pub use identity::{PeerIdentity, PeerIdentityString};
+pub use link_transport::{LinkTransport, LinkTransportError, PeerConnection, StreamType as LinkStreamType};
 pub use media::{
     AudioDevice, AudioTrack, MediaEvent, MediaStream, MediaStreamManager, VideoDevice, VideoTrack,
 };
