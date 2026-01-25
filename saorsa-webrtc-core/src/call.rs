@@ -4,8 +4,9 @@
 //! In Phase 2, this will be replaced with a QUIC-native implementation via QuicMediaTransport.
 
 use crate::identity::PeerIdentity;
+use crate::link_transport::PeerConnection;
 use crate::media::{MediaStreamManager, WebRtcTrack};
-use crate::quic_media_transport::QuicMediaTransport;
+use crate::quic_media_transport::{MediaTransportError, QuicMediaTransport};
 use crate::types::{CallEvent, CallId, CallState, MediaConstraints};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -28,6 +29,16 @@ pub enum CallError {
     /// Configuration error
     #[error("Configuration error: {0}")]
     ConfigError(String),
+
+    /// Transport error
+    #[error("Transport error: {0}")]
+    TransportError(String),
+}
+
+impl From<MediaTransportError> for CallError {
+    fn from(err: MediaTransportError) -> Self {
+        CallError::TransportError(err.to_string())
+    }
 }
 
 /// Call manager configuration
@@ -467,6 +478,133 @@ impl<I: PeerIdentity> CallManager<I> {
             .get(&call_id)
             .is_some_and(|call| call.media_transport.is_some())
     }
+
+    /// Initiate a QUIC-native call (bypasses SDP/ICE)
+    ///
+    /// Creates a call using only QuicMediaTransport, without creating a
+    /// legacy RTCPeerConnection. This is the preferred method for new
+    /// QUIC-native calls.
+    ///
+    /// # Arguments
+    ///
+    /// * `callee` - The remote peer identity
+    /// * `constraints` - Media constraints for the call
+    /// * `peer` - The QUIC peer connection to use for transport
+    ///
+    /// # Errors
+    ///
+    /// Returns error if call cannot be initiated or transport connection fails.
+    pub async fn initiate_quic_call(
+        &self,
+        callee: I,
+        constraints: MediaConstraints,
+        peer: PeerConnection,
+    ) -> Result<CallId, CallError> {
+        // Enforce max_concurrent_calls limit
+        let calls = self.calls.read().await;
+        if calls.len() >= self.config.max_concurrent_calls {
+            return Err(CallError::ConfigError(format!(
+                "Maximum concurrent calls limit reached: {}",
+                self.config.max_concurrent_calls
+            )));
+        }
+        drop(calls);
+
+        let call_id = CallId::new();
+
+        tracing::info!(
+            "Initiating QUIC call {} to peer: {}",
+            call_id,
+            callee.to_string_repr()
+        );
+
+        // Create and connect QUIC-based media transport
+        let media_transport = Arc::new(QuicMediaTransport::new());
+        media_transport.connect(peer).await?;
+        tracing::debug!("QuicMediaTransport connected for call {}", call_id);
+
+        // Create a placeholder peer connection (required for legacy compatibility)
+        // This will be removed in Phase 3.2
+        let peer_connection = Arc::new(
+            webrtc::api::APIBuilder::new()
+                .build()
+                .new_peer_connection(
+                    webrtc::peer_connection::configuration::RTCConfiguration::default(),
+                )
+                .await
+                .map_err(|e| {
+                    tracing::error!(
+                        "Failed to create peer connection for call {}: {}",
+                        call_id,
+                        e
+                    );
+                    CallError::ConfigError(format!("Failed to create peer connection: {}", e))
+                })?,
+        );
+
+        let call = Call {
+            id: call_id,
+            remote_peer: callee.clone(),
+            peer_connection,
+            media_transport: Some(media_transport),
+            state: CallState::Connecting,
+            constraints: constraints.clone(),
+            tracks: Vec::new(), // QUIC calls don't use WebRTC tracks
+        };
+
+        let mut calls = self.calls.write().await;
+        calls.insert(call_id, call);
+
+        // Emit call initiated event
+        let _ = self.event_sender.send(CallEvent::CallInitiated {
+            call_id,
+            callee,
+            constraints,
+        });
+
+        Ok(call_id)
+    }
+
+    /// Connect an existing call's QuicMediaTransport to a peer
+    ///
+    /// This method connects the call's media transport to the specified peer,
+    /// enabling QUIC-based media streaming.
+    ///
+    /// # Arguments
+    ///
+    /// * `call_id` - The call to connect
+    /// * `peer` - The QUIC peer connection to use
+    ///
+    /// # Errors
+    ///
+    /// Returns error if call not found, no media transport exists, or
+    /// connection fails.
+    pub async fn connect_quic_transport(
+        &self,
+        call_id: CallId,
+        peer: PeerConnection,
+    ) -> Result<(), CallError> {
+        let calls = self.calls.read().await;
+        let call = calls
+            .get(&call_id)
+            .ok_or_else(|| CallError::CallNotFound(call_id.to_string()))?;
+
+        let transport = call
+            .media_transport
+            .as_ref()
+            .ok_or_else(|| CallError::ConfigError("Call has no media transport".to_string()))?;
+
+        tracing::debug!(
+            "Connecting QuicMediaTransport for call {} to peer {}",
+            call_id,
+            peer.peer_id
+        );
+
+        transport.connect(peer).await?;
+
+        tracing::info!("QuicMediaTransport connected for call {}", call_id);
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -681,6 +819,104 @@ mod tests {
         assert!(matches!(result, Err(CallError::CallNotFound(_))));
 
         let result = call_manager.start_ice_gathering(fake_call_id).await;
+        assert!(matches!(result, Err(CallError::CallNotFound(_))));
+    }
+
+    /// Helper to create a test PeerConnection
+    fn test_peer() -> crate::link_transport::PeerConnection {
+        crate::link_transport::PeerConnection {
+            peer_id: "test-peer".to_string(),
+            remote_addr: "127.0.0.1:9000".parse().unwrap(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_initiate_quic_call() {
+        let config = CallManagerConfig::default();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
+
+        let callee = PeerIdentityString::new("quic-callee");
+        let constraints = MediaConstraints::audio_only();
+        let peer = test_peer();
+
+        let call_id = call_manager
+            .initiate_quic_call(callee, constraints, peer)
+            .await
+            .unwrap();
+
+        // QUIC calls start in Connecting state (already connected to transport)
+        let state = call_manager.get_call_state(call_id).await;
+        assert_eq!(state, Some(CallState::Connecting));
+
+        // Verify media transport is set and connected
+        assert!(call_manager.has_media_transport(call_id).await);
+    }
+
+    #[tokio::test]
+    async fn test_initiate_quic_call_respects_max_concurrent() {
+        let config = CallManagerConfig {
+            max_concurrent_calls: 1,
+        };
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
+
+        let callee = PeerIdentityString::new("callee");
+        let constraints = MediaConstraints::audio_only();
+
+        // First call should succeed
+        let _ = call_manager
+            .initiate_quic_call(callee.clone(), constraints.clone(), test_peer())
+            .await
+            .unwrap();
+
+        // Second call should fail due to limit
+        let result = call_manager
+            .initiate_quic_call(callee, constraints, test_peer())
+            .await;
+
+        assert!(matches!(result, Err(CallError::ConfigError(_))));
+    }
+
+    #[tokio::test]
+    async fn test_connect_quic_transport() {
+        let config = CallManagerConfig::default();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
+
+        let callee = PeerIdentityString::new("callee");
+        let constraints = MediaConstraints::audio_only();
+
+        // Create a regular call (has unconnected media transport)
+        let call_id = call_manager
+            .initiate_call(callee, constraints)
+            .await
+            .unwrap();
+
+        // Connect the transport
+        let peer = test_peer();
+        let result = call_manager.connect_quic_transport(call_id, peer).await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_connect_quic_transport_call_not_found() {
+        let config = CallManagerConfig::default();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
+
+        let fake_call_id = CallId::new();
+        let peer = test_peer();
+
+        let result = call_manager
+            .connect_quic_transport(fake_call_id, peer)
+            .await;
+
         assert!(matches!(result, Err(CallError::CallNotFound(_))));
     }
 }
