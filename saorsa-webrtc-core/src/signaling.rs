@@ -40,8 +40,8 @@ pub enum SignalingError {
 /// - Stream-based media routing (different stream types for audio/video/data)
 /// - Reduced connection overhead and improved NAT traversal efficiency
 ///
-/// To access the underlying connection for sharing, use transport-specific methods
-/// (e.g., `AntQuicTransport::get_node()` for ant-quic).
+/// To access the underlying connection for sharing, use `get_connection()` method
+/// or transport-specific methods (e.g., `AntQuicTransport::get_node()` for ant-quic).
 #[async_trait]
 pub trait SignalingTransport: Send + Sync {
     /// Peer identifier type
@@ -65,6 +65,25 @@ pub trait SignalingTransport: Send + Sync {
         &self,
         peer: &Self::PeerId,
     ) -> Result<Option<SocketAddr>, Self::Error>;
+
+    /// Get the underlying QUIC connection handle for connection sharing
+    ///
+    /// This method allows media transport handlers to share the signaling connection,
+    /// avoiding the need for separate ICE negotiation.
+    ///
+    /// # Returns
+    ///
+    /// Returns `None` if the transport doesn't support connection sharing or the
+    /// connection is not yet established. Implementations should return `Some` only
+    /// when the underlying connection is ready to be shared.
+    ///
+    /// # Examples
+    ///
+    /// For AntQuicTransport, this returns the underlying ant-quic Node handle
+    /// which can be used to create QUIC streams for media transport.
+    fn get_connection_handle(&self) -> Option<Box<dyn std::any::Any>> {
+        None
+    }
 }
 
 /// Signaling message types
@@ -242,6 +261,28 @@ impl<T: SignalingTransport> SignalingHandler<T> {
         }
         Ok(endpoint)
     }
+
+    /// Get connection handle for sharing with media transport
+    ///
+    /// This allows media transport to use the same underlying connection
+    /// as signaling, avoiding separate connection establishment.
+    ///
+    /// # Returns
+    ///
+    /// Returns a generic connection handle if available, `None` if the transport
+    /// doesn't support connection sharing or the connection is not ready.
+    #[must_use]
+    pub fn get_connection_handle(&self) -> Option<Box<dyn std::any::Any>> {
+        self.transport.get_connection_handle()
+    }
+
+    /// Get access to the underlying transport
+    ///
+    /// Useful for accessing transport-specific methods and state.
+    #[must_use]
+    pub fn transport(&self) -> &std::sync::Arc<T> {
+        &self.transport
+    }
 }
 
 /// Helper function to extract message type for tracing
@@ -373,5 +414,47 @@ mod tests {
         let result = handler.discover_peer_endpoint(&"peer1".to_string()).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), Some("127.0.0.1:8080".parse().unwrap()));
+    }
+
+    #[tokio::test]
+    async fn test_signaling_handler_get_connection_handle() {
+        let transport = Arc::new(MockTransport::new());
+        let handler = SignalingHandler::new(transport);
+
+        // MockTransport doesn't provide a connection handle (uses default None)
+        let handle = handler.get_connection_handle();
+        assert!(handle.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_signaling_handler_access_transport() {
+        let transport = Arc::new(MockTransport::new());
+        let handler = SignalingHandler::new(transport.clone());
+
+        // Should be able to access the underlying transport
+        let handler_transport = handler.transport();
+        assert!(std::ptr::eq(
+            handler_transport.as_ref() as *const _,
+            transport.as_ref() as *const _
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_signaling_message_with_quic_endpoint() {
+        let offer = SignalingMessage::Offer {
+            session_id: "sess-123".to_string(),
+            sdp: "v=0\r\n".to_string(),
+            quic_endpoint: Some("192.168.1.100:4433".parse().unwrap()),
+        };
+
+        assert_eq!(offer.session_id(), "sess-123");
+
+        let answer = SignalingMessage::Answer {
+            session_id: "sess-123".to_string(),
+            sdp: "v=0\r\n".to_string(),
+            quic_endpoint: Some("192.168.1.101:4433".parse().unwrap()),
+        };
+
+        assert_eq!(answer.session_id(), "sess-123");
     }
 }
