@@ -651,7 +651,10 @@ impl<I: PeerIdentity> CallManager<I> {
     /// # Errors
     ///
     /// Returns error if call not found or has no media transport.
-    pub async fn update_state_from_transport(&self, call_id: CallId) -> Result<CallState, CallError> {
+    pub async fn update_state_from_transport(
+        &self,
+        call_id: CallId,
+    ) -> Result<CallState, CallError> {
         let mut calls = self.calls.write().await;
         let call = calls
             .get_mut(&call_id)
@@ -1188,18 +1191,24 @@ mod tests {
         ));
 
         // Invalid transitions
-        assert!(!CallManager::<PeerIdentityString>::is_valid_quic_transition(
-            CallState::Idle,
-            CallState::Connected
-        ));
-        assert!(!CallManager::<PeerIdentityString>::is_valid_quic_transition(
-            CallState::Connected,
-            CallState::Calling
-        ));
-        assert!(!CallManager::<PeerIdentityString>::is_valid_quic_transition(
-            CallState::Ending,
-            CallState::Connected
-        ));
+        assert!(
+            !CallManager::<PeerIdentityString>::is_valid_quic_transition(
+                CallState::Idle,
+                CallState::Connected
+            )
+        );
+        assert!(
+            !CallManager::<PeerIdentityString>::is_valid_quic_transition(
+                CallState::Connected,
+                CallState::Calling
+            )
+        );
+        assert!(
+            !CallManager::<PeerIdentityString>::is_valid_quic_transition(
+                CallState::Ending,
+                CallState::Connected
+            )
+        );
     }
 
     /// Test that verifies PeerIdentity type safety is preserved across all methods
