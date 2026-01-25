@@ -1788,6 +1788,63 @@ impl QuicMediaTransport {
     }
 }
 
+// ============================================================================
+// Connection Sharing
+// ============================================================================
+
+impl QuicMediaTransport {
+    /// Create a new `QuicMediaTransport` and connect it to a peer
+    ///
+    /// This is a convenience method that combines `new()` and `connect()`.
+    ///
+    /// # Arguments
+    ///
+    /// * `peer` - The peer connection to use
+    ///
+    /// # Returns
+    ///
+    /// A connected `QuicMediaTransport` ready to send/receive media.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if connection fails.
+    pub async fn with_peer(peer: PeerConnection) -> Result<Self, MediaTransportError> {
+        let transport = Self::new();
+        transport.connect(peer).await?;
+        Ok(transport)
+    }
+
+    /// Get the peer connection info if connected
+    ///
+    /// # Returns
+    ///
+    /// The underlying `PeerConnection` info if connected, `None` otherwise.
+    pub async fn peer_info(&self) -> Option<PeerConnection> {
+        self.peer.read().await.clone()
+    }
+
+    /// Check if this transport is healthy (connected and no errors)
+    ///
+    /// # Returns
+    ///
+    /// `true` if the transport is in a healthy state.
+    pub async fn is_healthy(&self) -> bool {
+        matches!(*self.state.read().await, MediaTransportState::Connected)
+    }
+
+    /// Get the current health status with details
+    ///
+    /// # Returns
+    ///
+    /// A tuple of (is_healthy, state, stats)
+    pub async fn health_check(&self) -> (bool, MediaTransportState, TransportStats) {
+        let state = *self.state.read().await;
+        let stats = self.stats.read().await.clone();
+        let is_healthy = matches!(state, MediaTransportState::Connected);
+        (is_healthy, state, stats)
+    }
+}
+
 #[cfg(test)]
 mod priority_tests {
     use super::*;
