@@ -161,6 +161,14 @@ pub struct TransportStats {
     pub bytes_received: u64,
     /// Number of stream errors
     pub stream_errors: u64,
+    /// RTCP packets sent
+    pub rtcp_packets_sent: u64,
+    /// RTCP packets received
+    pub rtcp_packets_received: u64,
+    /// RTCP bytes sent
+    pub rtcp_bytes_sent: u64,
+    /// RTCP bytes received
+    pub rtcp_bytes_received: u64,
 }
 
 impl Default for QuicMediaTransport {
@@ -449,6 +457,28 @@ impl QuicMediaTransport {
     pub async fn record_error(&self) {
         let mut stats = self.stats.write().await;
         stats.stream_errors += 1;
+    }
+
+    /// Record RTCP packet sent
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - Number of bytes sent
+    pub async fn record_rtcp_sent(&self, bytes: u64) {
+        let mut stats = self.stats.write().await;
+        stats.rtcp_packets_sent += 1;
+        stats.rtcp_bytes_sent += bytes;
+    }
+
+    /// Record RTCP packet received
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - Number of bytes received
+    pub async fn record_rtcp_received(&self, bytes: u64) {
+        let mut stats = self.stats.write().await;
+        stats.rtcp_packets_received += 1;
+        stats.rtcp_bytes_received += bytes;
     }
 }
 
@@ -1290,6 +1320,88 @@ impl QuicMediaTransport {
         self.send_rtp(StreamType::Data, packet).await
     }
 
+    /// Receive RTCP feedback packet
+    ///
+    /// Placeholder for receiving RTCP packets from the remote peer.
+    /// This method documents the expected interface for RTCP reception.
+    ///
+    /// # Returns
+    ///
+    /// RTCP packet bytes if available
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Transport is not connected
+    /// - No RTCP stream is open
+    /// - Reception fails
+    pub async fn recv_rtcp(&self) -> Result<Vec<u8>, MediaTransportError> {
+        if !self.is_connected().await {
+            return Err(MediaTransportError::NotConnected);
+        }
+
+        // Check if RTCP stream is open
+        let streams = self.streams.read().await;
+        let rtcp_open = streams
+            .get(&StreamType::RtcpFeedback)
+            .map(|h| h.is_open)
+            .unwrap_or(false);
+
+        drop(streams);
+
+        if !rtcp_open {
+            return Err(MediaTransportError::StreamError(
+                "RTCP stream not open".to_string(),
+            ));
+        }
+
+        // Placeholder for actual RTCP reception
+        Err(MediaTransportError::StreamError(
+            "recv_rtcp requires LinkTransport integration".to_string(),
+        ))
+    }
+
+    /// Receive data channel message
+    ///
+    /// Placeholder for receiving data channel packets.
+    /// This method documents the expected interface for data reception.
+    ///
+    /// # Returns
+    ///
+    /// Data bytes if available
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Transport is not connected
+    /// - No data stream is open
+    /// - Reception fails
+    pub async fn recv_data(&self) -> Result<Vec<u8>, MediaTransportError> {
+        if !self.is_connected().await {
+            return Err(MediaTransportError::NotConnected);
+        }
+
+        // Check if data stream is open
+        let streams = self.streams.read().await;
+        let data_open = streams
+            .get(&StreamType::Data)
+            .map(|h| h.is_open)
+            .unwrap_or(false);
+
+        drop(streams);
+
+        if !data_open {
+            return Err(MediaTransportError::StreamError(
+                "Data stream not open".to_string(),
+            ));
+        }
+
+        // Placeholder for actual data reception
+        Err(MediaTransportError::StreamError(
+            "recv_data requires LinkTransport integration".to_string(),
+        ))
+    }
+
     /// Get the maximum packet size supported by the transport
     ///
     /// # Returns
@@ -1465,6 +1577,118 @@ mod send_recv_tests {
 
         let stats = transport.stats().await;
         assert_eq!(stats.packets_sent, 2);
+    }
+
+    #[tokio::test]
+    async fn test_recv_rtcp_when_disconnected() {
+        let transport = QuicMediaTransport::new();
+
+        let result = transport.recv_rtcp().await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_recv_rtcp_no_stream() {
+        let transport = QuicMediaTransport::new();
+        transport.connect(test_peer()).await.unwrap();
+
+        let result = transport.recv_rtcp().await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_recv_rtcp_with_stream() {
+        let transport = QuicMediaTransport::new();
+        transport.connect(test_peer()).await.unwrap();
+        transport.open_stream(StreamType::RtcpFeedback).await.unwrap();
+
+        let result = transport.recv_rtcp().await;
+        // Should fail with integration placeholder
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_recv_data_when_disconnected() {
+        let transport = QuicMediaTransport::new();
+
+        let result = transport.recv_data().await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_recv_data_no_stream() {
+        let transport = QuicMediaTransport::new();
+        transport.connect(test_peer()).await.unwrap();
+
+        let result = transport.recv_data().await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_recv_data_with_stream() {
+        let transport = QuicMediaTransport::new();
+        transport.connect(test_peer()).await.unwrap();
+        transport.open_stream(StreamType::Data).await.unwrap();
+
+        let result = transport.recv_data().await;
+        // Should fail with integration placeholder
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_rtcp_stats_recording() {
+        let transport = QuicMediaTransport::new();
+        transport.connect(test_peer()).await.unwrap();
+
+        let initial_stats = transport.stats().await;
+        assert_eq!(initial_stats.rtcp_packets_sent, 0);
+        assert_eq!(initial_stats.rtcp_bytes_sent, 0);
+
+        // Record some RTCP packets
+        transport.record_rtcp_sent(100).await;
+        transport.record_rtcp_sent(150).await;
+
+        let stats = transport.stats().await;
+        assert_eq!(stats.rtcp_packets_sent, 2);
+        assert_eq!(stats.rtcp_bytes_sent, 250);
+    }
+
+    #[tokio::test]
+    async fn test_rtcp_receive_stats_recording() {
+        let transport = QuicMediaTransport::new();
+        transport.connect(test_peer()).await.unwrap();
+
+        let initial_stats = transport.stats().await;
+        assert_eq!(initial_stats.rtcp_packets_received, 0);
+        assert_eq!(initial_stats.rtcp_bytes_received, 0);
+
+        // Record some received RTCP packets
+        transport.record_rtcp_received(120).await;
+        transport.record_rtcp_received(180).await;
+
+        let stats = transport.stats().await;
+        assert_eq!(stats.rtcp_packets_received, 2);
+        assert_eq!(stats.rtcp_bytes_received, 300);
+    }
+
+    #[tokio::test]
+    async fn test_rtcp_bidirectional() {
+        let transport = QuicMediaTransport::new();
+        transport.connect(test_peer()).await.unwrap();
+
+        // Send and receive RTCP
+        let rtcp_packet = &[0x80, 0xC9, 0x00, 0x00];
+        let result = transport.send_rtcp(rtcp_packet).await;
+        assert!(result.is_ok());
+
+        // Open RTCP stream and try to receive
+        transport.open_stream(StreamType::RtcpFeedback).await.unwrap();
+        let recv_result = transport.recv_rtcp().await;
+        assert!(recv_result.is_err()); // Placeholder
+
+        // Check stats
+        let stats = transport.stats().await;
+        assert!(stats.packets_sent > 0);
     }
 }
 
