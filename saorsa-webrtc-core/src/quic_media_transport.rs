@@ -1476,11 +1476,13 @@ impl QuicMediaTransport {
     /// A vector of tuples containing (stream_type, priority).
     pub async fn stream_priorities(&self) -> Vec<(StreamType, StreamPriority)> {
         let streams = self.streams.read().await;
-        streams
+        let mut priorities = streams
             .values()
             .filter(|h| h.is_open)
             .map(|h| (h.stream_type, StreamPriority::from(h.stream_type)))
-            .collect()
+            .collect::<Vec<_>>();
+        priorities.sort_by_key(|p| p.1);
+        priorities
     }
 
     /// Check if audio streams have highest priority
