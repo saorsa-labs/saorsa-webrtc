@@ -617,18 +617,17 @@ impl<I: PeerIdentity> CallManager<I> {
         }
 
         // Validate peer capabilities satisfy our constraints
-        if !peer_capabilities.satisfies(&call.constraints) {
+        if let Err(e) = Self::validate_remote_capabilities(&call.constraints, &peer_capabilities) {
             tracing::warn!(
                 call_id = %call_id,
                 peer_audio = peer_capabilities.audio,
                 peer_video = peer_capabilities.video,
                 required_audio = call.constraints.audio,
                 required_video = call.constraints.video,
+                error = %e,
                 "Peer capabilities do not satisfy call constraints"
             );
-            return Err(CallError::ConfigError(
-                "Peer capabilities do not satisfy call constraints".to_string(),
-            ));
+            return Err(e);
         }
 
         // Verify QuicMediaTransport is connected
@@ -668,6 +667,51 @@ impl<I: PeerIdentity> CallManager<I> {
             peer_video = peer_capabilities.video,
             "Connection confirmed"
         );
+
+        Ok(())
+    }
+
+    /// Validate remote capabilities against call constraints
+    ///
+    /// Checks whether the remote peer's capabilities satisfy the call's
+    /// media requirements. This is used during connection confirmation
+    /// to ensure both peers can support the required media types.
+    ///
+    /// # Validation Rules
+    ///
+    /// - If audio is required by constraints, remote must support audio
+    /// - If video is required by constraints, remote must support video
+    /// - If screen share is required, remote must support video
+    /// - Bandwidth requirements are considered but not strictly enforced
+    ///
+    /// # Arguments
+    ///
+    /// * `constraints` - The local call constraints
+    /// * `remote_caps` - The remote peer's capabilities
+    ///
+    /// # Errors
+    ///
+    /// Returns error describing which capability is missing or incompatible.
+    pub fn validate_remote_capabilities(
+        constraints: &MediaConstraints,
+        remote_caps: &MediaCapabilities,
+    ) -> Result<(), CallError> {
+        // Check audio requirement
+        if constraints.audio && !remote_caps.audio {
+            return Err(CallError::ConfigError(
+                "Remote peer does not support audio".to_string(),
+            ));
+        }
+
+        // Check video requirement (video or screen share)
+        if (constraints.video || constraints.screen_share) && !remote_caps.video {
+            return Err(CallError::ConfigError(
+                "Remote peer does not support video".to_string(),
+            ));
+        }
+
+        // Note: Bandwidth is advisory, not strictly enforced
+        // In the future, we could add bandwidth negotiation logic here
 
         Ok(())
     }
@@ -1623,6 +1667,70 @@ mod tests {
                 unreachable!("Expected ConnectionEstablished event, got: {:?}", other);
             }
         }
+    }
+
+    #[test]
+    fn test_validate_remote_capabilities_audio_only() {
+        let constraints = MediaConstraints::audio_only();
+        let caps = MediaCapabilities::audio_only();
+
+        let result =
+            CallManager::<PeerIdentityString>::validate_remote_capabilities(&constraints, &caps);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_remote_capabilities_video_call() {
+        let constraints = MediaConstraints::video_call();
+        let video_caps = MediaCapabilities::video();
+        let audio_caps = MediaCapabilities::audio_only();
+
+        // Video caps should satisfy video constraints
+        let result = CallManager::<PeerIdentityString>::validate_remote_capabilities(
+            &constraints,
+            &video_caps,
+        );
+        assert!(result.is_ok());
+
+        // Audio-only caps should NOT satisfy video constraints
+        let result = CallManager::<PeerIdentityString>::validate_remote_capabilities(
+            &constraints,
+            &audio_caps,
+        );
+        assert!(matches!(result, Err(CallError::ConfigError(_))));
+    }
+
+    #[test]
+    fn test_validate_remote_capabilities_missing_audio() {
+        let constraints = MediaConstraints::video_call(); // requires audio
+        let caps = MediaCapabilities {
+            audio: false,
+            video: true,
+            data_channel: false,
+            max_bandwidth_kbps: 2500,
+        };
+
+        let result =
+            CallManager::<PeerIdentityString>::validate_remote_capabilities(&constraints, &caps);
+        assert!(matches!(result, Err(CallError::ConfigError(_))));
+    }
+
+    #[test]
+    fn test_validate_remote_capabilities_screen_share() {
+        let constraints = MediaConstraints::screen_share();
+        let caps = MediaCapabilities::video(); // screen share requires video capability
+
+        let result =
+            CallManager::<PeerIdentityString>::validate_remote_capabilities(&constraints, &caps);
+        assert!(result.is_ok());
+
+        // Audio-only caps should NOT satisfy screen share (needs video)
+        let audio_caps = MediaCapabilities::audio_only();
+        let result = CallManager::<PeerIdentityString>::validate_remote_capabilities(
+            &constraints,
+            &audio_caps,
+        );
+        assert!(matches!(result, Err(CallError::ConfigError(_))));
     }
 
     /// Test that verifies PeerIdentity type safety is preserved across all methods
