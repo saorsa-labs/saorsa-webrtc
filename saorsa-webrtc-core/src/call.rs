@@ -84,6 +84,42 @@ pub struct Call<I: PeerIdentity> {
 /// type-safe handling of different identity schemes (e.g., string IDs,
 /// cryptographic identities).
 ///
+/// # QUIC-Native Call Flow
+///
+/// For QUIC-native calls, the state machine follows this flow:
+///
+/// ```text
+///     Idle
+///       │
+///       ▼
+///    Calling ───────────────────┐
+///       │                       │
+///       ▼ (exchange_capabilities)│
+///  Connecting                   │
+///       │                       ▼
+///       ▼ (confirm_connection)  Failed
+///   Connected                   │
+///       │                       │
+///       ▼ (end_call)            │
+///    Ending ◄───────────────────┘
+///       │
+///       ▼
+///     Idle
+/// ```
+///
+/// Key transitions:
+/// - `initiate_quic_call`: Idle → Connecting (transport connects immediately)
+/// - `exchange_capabilities`: Calling → Connecting
+/// - `confirm_connection`: Connecting → Connected
+/// - `end_call`: Any → Ending → removed from manager
+/// - Failure: Any active state → Failed
+///
+/// # Legacy WebRTC Call Flow (deprecated)
+///
+/// For legacy calls, the flow uses SDP/ICE negotiation:
+/// - `initiate_call` + `create_offer` for SDP
+/// - `handle_answer` + `add_ice_candidate` for connection
+///
 /// # Type Safety
 ///
 /// All methods preserve the `I: PeerIdentity` type parameter, ensuring:
@@ -940,6 +976,14 @@ impl<I: PeerIdentity> CallManager<I> {
     ///
     /// Validates that the proposed state transition follows the QUIC call
     /// state machine rules.
+    ///
+    /// # Valid Transitions (QUIC-native)
+    ///
+    /// - **Setup**: Idle → Calling → Connecting → Connected
+    /// - **Direct connect**: Idle → Connecting (for QUIC with pre-established transport)
+    /// - **Teardown**: Connected → Ending → Idle
+    /// - **Failure**: Any active state → Failed
+    /// - **Recovery**: Failed → Idle
     #[must_use]
     pub fn is_valid_quic_transition(from: CallState, to: CallState) -> bool {
         matches!(
@@ -960,6 +1004,79 @@ impl<I: PeerIdentity> CallManager<I> {
                 // Recovery from failure
                 | (CallState::Failed, CallState::Idle)
         )
+    }
+
+    /// Transition call to failed state
+    ///
+    /// Marks the call as failed and emits a `ConnectionFailed` event.
+    /// This can be called from any active state (Calling, Connecting, Connected).
+    ///
+    /// # Arguments
+    ///
+    /// * `call_id` - The call to mark as failed
+    /// * `reason` - Description of why the call failed
+    ///
+    /// # Errors
+    ///
+    /// Returns error if call not found or already in terminal state.
+    pub async fn fail_call(&self, call_id: CallId, reason: String) -> Result<(), CallError> {
+        let mut calls = self.calls.write().await;
+        let call = calls
+            .get_mut(&call_id)
+            .ok_or_else(|| CallError::CallNotFound(call_id.to_string()))?;
+
+        // Validate transition is allowed
+        if !Self::is_valid_quic_transition(call.state, CallState::Failed) {
+            tracing::warn!(
+                call_id = %call_id,
+                current_state = ?call.state,
+                "Cannot transition to Failed from current state"
+            );
+            return Err(CallError::InvalidState);
+        }
+
+        let old_state = call.state;
+        call.state = CallState::Failed;
+
+        tracing::warn!(
+            call_id = %call_id,
+            old_state = ?old_state,
+            reason = %reason,
+            "Call failed"
+        );
+
+        let _ = self.event_sender.send(CallEvent::ConnectionFailed {
+            call_id,
+            error: reason,
+        });
+
+        Ok(())
+    }
+
+    /// Get current call information
+    ///
+    /// Returns a snapshot of the call's current state, constraints, and
+    /// transport status.
+    ///
+    /// # Arguments
+    ///
+    /// * `call_id` - The call to query
+    ///
+    /// # Returns
+    ///
+    /// Returns `None` if call not found.
+    pub async fn get_call_info(
+        &self,
+        call_id: CallId,
+    ) -> Option<(CallState, MediaConstraints, bool)> {
+        let calls = self.calls.read().await;
+        calls.get(&call_id).map(|call| {
+            (
+                call.state,
+                call.constraints.clone(),
+                call.media_transport.is_some(),
+            )
+        })
     }
 }
 
@@ -1775,5 +1892,135 @@ mod tests {
 
         // End call cleanly
         call_manager.end_call(call_id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_fail_call() {
+        let config = CallManagerConfig::default();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
+
+        let mut event_rx = call_manager.subscribe_events();
+
+        let callee = PeerIdentityString::new("callee");
+        let constraints = MediaConstraints::audio_only();
+        let peer = test_peer();
+
+        let call_id = call_manager
+            .initiate_quic_call(callee, constraints, peer)
+            .await
+            .unwrap();
+
+        // Drain CallInitiated event
+        let _ = event_rx.try_recv();
+
+        // Fail the call
+        let result = call_manager
+            .fail_call(call_id, "Network error".to_string())
+            .await;
+        assert!(result.is_ok());
+
+        // Verify state is Failed
+        let state = call_manager.get_call_state(call_id).await;
+        assert_eq!(state, Some(CallState::Failed));
+
+        // Verify ConnectionFailed event was emitted
+        let event = event_rx.try_recv();
+        assert!(event.is_ok());
+
+        match event {
+            Ok(CallEvent::ConnectionFailed {
+                call_id: eid,
+                error,
+            }) => {
+                assert_eq!(eid, call_id);
+                assert_eq!(error, "Network error");
+            }
+            other => {
+                unreachable!("Expected ConnectionFailed event, got: {:?}", other);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fail_call_not_found() {
+        let config = CallManagerConfig::default();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
+
+        let fake_call_id = CallId::new();
+        let result = call_manager
+            .fail_call(fake_call_id, "Error".to_string())
+            .await;
+
+        assert!(matches!(result, Err(CallError::CallNotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn test_fail_call_from_invalid_state() {
+        let config = CallManagerConfig::default();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
+
+        let callee = PeerIdentityString::new("callee");
+        let constraints = MediaConstraints::audio_only();
+        let peer = test_peer();
+
+        let call_id = call_manager
+            .initiate_quic_call(callee, constraints.clone(), peer)
+            .await
+            .unwrap();
+
+        // First fail the call
+        call_manager
+            .fail_call(call_id, "Error 1".to_string())
+            .await
+            .unwrap();
+
+        // Try to fail again from Failed state - should fail
+        let result = call_manager.fail_call(call_id, "Error 2".to_string()).await;
+
+        assert!(matches!(result, Err(CallError::InvalidState)));
+    }
+
+    #[tokio::test]
+    async fn test_get_call_info() {
+        let config = CallManagerConfig::default();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
+
+        let callee = PeerIdentityString::new("callee");
+        let constraints = MediaConstraints::video_call();
+        let peer = test_peer();
+
+        let call_id = call_manager
+            .initiate_quic_call(callee, constraints.clone(), peer)
+            .await
+            .unwrap();
+
+        let info = call_manager.get_call_info(call_id).await;
+        assert!(info.is_some());
+
+        let (state, call_constraints, has_transport) = info.unwrap();
+        assert_eq!(state, CallState::Connecting);
+        assert_eq!(call_constraints.video, constraints.video);
+        assert!(has_transport);
+    }
+
+    #[tokio::test]
+    async fn test_get_call_info_not_found() {
+        let config = CallManagerConfig::default();
+        let call_manager = CallManager::<PeerIdentityString>::new(config)
+            .await
+            .unwrap();
+
+        let fake_call_id = CallId::new();
+        let info = call_manager.get_call_info(fake_call_id).await;
+
+        assert!(info.is_none());
     }
 }
