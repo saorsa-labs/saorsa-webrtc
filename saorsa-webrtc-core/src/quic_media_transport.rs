@@ -381,11 +381,7 @@ impl QuicMediaTransport {
     /// A vector of all currently active stream handles.
     pub async fn active_streams(&self) -> Vec<StreamHandle> {
         let streams = self.streams.read().await;
-        streams
-            .values()
-            .filter(|h| h.is_open)
-            .cloned()
-            .collect()
+        streams.values().filter(|h| h.is_open).cloned().collect()
     }
 
     /// Close a specific stream
@@ -555,7 +551,10 @@ mod tests {
         let transport = QuicMediaTransport::new();
         transport.connect(test_peer()).await.unwrap();
 
-        let handle = transport.get_or_create_stream(StreamType::Audio).await.unwrap();
+        let handle = transport
+            .get_or_create_stream(StreamType::Audio)
+            .await
+            .unwrap();
 
         assert_eq!(handle.stream_type, StreamType::Audio);
         assert!(handle.is_open);
@@ -572,11 +571,26 @@ mod tests {
 
     #[tokio::test]
     async fn test_stream_priority() {
-        assert_eq!(QuicMediaTransport::priority_for(StreamType::Audio), StreamPriority::High);
-        assert_eq!(QuicMediaTransport::priority_for(StreamType::Video), StreamPriority::Medium);
-        assert_eq!(QuicMediaTransport::priority_for(StreamType::Screen), StreamPriority::Low);
-        assert_eq!(QuicMediaTransport::priority_for(StreamType::Data), StreamPriority::Low);
-        assert_eq!(QuicMediaTransport::priority_for(StreamType::RtcpFeedback), StreamPriority::High);
+        assert_eq!(
+            QuicMediaTransport::priority_for(StreamType::Audio),
+            StreamPriority::High
+        );
+        assert_eq!(
+            QuicMediaTransport::priority_for(StreamType::Video),
+            StreamPriority::Medium
+        );
+        assert_eq!(
+            QuicMediaTransport::priority_for(StreamType::Screen),
+            StreamPriority::Low
+        );
+        assert_eq!(
+            QuicMediaTransport::priority_for(StreamType::Data),
+            StreamPriority::Low
+        );
+        assert_eq!(
+            QuicMediaTransport::priority_for(StreamType::RtcpFeedback),
+            StreamPriority::High
+        );
     }
 
     #[tokio::test]
@@ -584,8 +598,14 @@ mod tests {
         let transport = QuicMediaTransport::new();
         transport.connect(test_peer()).await.unwrap();
 
-        transport.get_or_create_stream(StreamType::Audio).await.unwrap();
-        transport.get_or_create_stream(StreamType::Video).await.unwrap();
+        transport
+            .get_or_create_stream(StreamType::Audio)
+            .await
+            .unwrap();
+        transport
+            .get_or_create_stream(StreamType::Video)
+            .await
+            .unwrap();
 
         let active = transport.active_streams().await;
         assert_eq!(active.len(), 2);
@@ -595,7 +615,10 @@ mod tests {
     async fn test_close_stream() {
         let transport = QuicMediaTransport::new();
         transport.connect(test_peer()).await.unwrap();
-        transport.get_or_create_stream(StreamType::Audio).await.unwrap();
+        transport
+            .get_or_create_stream(StreamType::Audio)
+            .await
+            .unwrap();
 
         let closed = transport.close_stream(StreamType::Audio).await;
         assert!(closed);
@@ -608,7 +631,10 @@ mod tests {
     async fn test_stats_recording() {
         let transport = QuicMediaTransport::new();
         transport.connect(test_peer()).await.unwrap();
-        transport.get_or_create_stream(StreamType::Audio).await.unwrap();
+        transport
+            .get_or_create_stream(StreamType::Audio)
+            .await
+            .unwrap();
 
         transport.record_sent(StreamType::Audio, 100).await;
         transport.record_received(StreamType::Audio, 50).await;
@@ -633,8 +659,14 @@ mod tests {
     async fn test_streams_cleared_on_disconnect() {
         let transport = QuicMediaTransport::new();
         transport.connect(test_peer()).await.unwrap();
-        transport.get_or_create_stream(StreamType::Audio).await.unwrap();
-        transport.get_or_create_stream(StreamType::Video).await.unwrap();
+        transport
+            .get_or_create_stream(StreamType::Audio)
+            .await
+            .unwrap();
+        transport
+            .get_or_create_stream(StreamType::Video)
+            .await
+            .unwrap();
 
         transport.disconnect().await.unwrap();
 
@@ -669,9 +701,9 @@ impl QuicMediaTransport {
         let handle = streams
             .entry(stream_type)
             .or_insert_with(|| StreamHandle::new(stream_type));
-        
+
         handle.is_open = true;
-        
+
         tracing::debug!("Opened stream for type {:?}", stream_type);
         Ok(())
     }
@@ -753,9 +785,10 @@ impl QuicMediaTransport {
             handle.is_open = true;
             Ok(())
         } else {
-            Err(MediaTransportError::StreamError(
-                format!("Stream not found: {:?}", stream_type),
-            ))
+            Err(MediaTransportError::StreamError(format!(
+                "Stream not found: {:?}",
+                stream_type
+            )))
         }
     }
 
@@ -792,10 +825,13 @@ mod stream_tests {
     #[tokio::test]
     async fn test_open_stream_when_connected() {
         let transport = QuicMediaTransport::new();
-        transport.connect(PeerConnection {
-            peer_id: "test-peer".to_string(),
-            remote_addr: "127.0.0.1:8080".parse().unwrap(),
-        }).await.unwrap();
+        transport
+            .connect(PeerConnection {
+                peer_id: "test-peer".to_string(),
+                remote_addr: "127.0.0.1:8080".parse().unwrap(),
+            })
+            .await
+            .unwrap();
 
         let result = transport.open_stream(StreamType::Audio).await;
         assert!(result.is_ok());
@@ -804,7 +840,7 @@ mod stream_tests {
     #[tokio::test]
     async fn test_open_stream_when_disconnected() {
         let transport = QuicMediaTransport::new();
-        
+
         let result = transport.open_stream(StreamType::Audio).await;
         assert!(result.is_err());
     }
@@ -812,10 +848,13 @@ mod stream_tests {
     #[tokio::test]
     async fn test_open_all_streams() {
         let transport = QuicMediaTransport::new();
-        transport.connect(PeerConnection {
-            peer_id: "test-peer".to_string(),
-            remote_addr: "127.0.0.1:8080".parse().unwrap(),
-        }).await.unwrap();
+        transport
+            .connect(PeerConnection {
+                peer_id: "test-peer".to_string(),
+                remote_addr: "127.0.0.1:8080".parse().unwrap(),
+            })
+            .await
+            .unwrap();
 
         let result = transport.open_all_streams().await;
         assert!(result.is_ok());
@@ -827,10 +866,13 @@ mod stream_tests {
     #[tokio::test]
     async fn test_all_streams_open() {
         let transport = QuicMediaTransport::new();
-        transport.connect(PeerConnection {
-            peer_id: "test-peer".to_string(),
-            remote_addr: "127.0.0.1:8080".parse().unwrap(),
-        }).await.unwrap();
+        transport
+            .connect(PeerConnection {
+                peer_id: "test-peer".to_string(),
+                remote_addr: "127.0.0.1:8080".parse().unwrap(),
+            })
+            .await
+            .unwrap();
 
         assert!(!transport.all_streams_open().await);
 
@@ -841,12 +883,18 @@ mod stream_tests {
     #[tokio::test]
     async fn test_ensure_stream_open() {
         let transport = QuicMediaTransport::new();
-        transport.connect(PeerConnection {
-            peer_id: "test-peer".to_string(),
-            remote_addr: "127.0.0.1:8080".parse().unwrap(),
-        }).await.unwrap();
+        transport
+            .connect(PeerConnection {
+                peer_id: "test-peer".to_string(),
+                remote_addr: "127.0.0.1:8080".parse().unwrap(),
+            })
+            .await
+            .unwrap();
 
-        let handle = transport.ensure_stream_open(StreamType::Video).await.unwrap();
+        let handle = transport
+            .ensure_stream_open(StreamType::Video)
+            .await
+            .unwrap();
         assert!(handle.is_open);
         assert_eq!(handle.stream_type, StreamType::Video);
     }
@@ -854,10 +902,13 @@ mod stream_tests {
     #[tokio::test]
     async fn test_reopen_stream() {
         let transport = QuicMediaTransport::new();
-        transport.connect(PeerConnection {
-            peer_id: "test-peer".to_string(),
-            remote_addr: "127.0.0.1:8080".parse().unwrap(),
-        }).await.unwrap();
+        transport
+            .connect(PeerConnection {
+                peer_id: "test-peer".to_string(),
+                remote_addr: "127.0.0.1:8080".parse().unwrap(),
+            })
+            .await
+            .unwrap();
 
         transport.open_stream(StreamType::Screen).await.unwrap();
         transport.close_stream(StreamType::Screen).await;
@@ -865,17 +916,23 @@ mod stream_tests {
         let result = transport.reopen_stream(StreamType::Screen).await;
         assert!(result.is_ok());
 
-        let handle = transport.get_or_create_stream(StreamType::Screen).await.unwrap();
+        let handle = transport
+            .get_or_create_stream(StreamType::Screen)
+            .await
+            .unwrap();
         assert!(handle.is_open);
     }
 
     #[tokio::test]
     async fn test_reopen_nonexistent_stream() {
         let transport = QuicMediaTransport::new();
-        transport.connect(PeerConnection {
-            peer_id: "test-peer".to_string(),
-            remote_addr: "127.0.0.1:8080".parse().unwrap(),
-        }).await.unwrap();
+        transport
+            .connect(PeerConnection {
+                peer_id: "test-peer".to_string(),
+                remote_addr: "127.0.0.1:8080".parse().unwrap(),
+            })
+            .await
+            .unwrap();
 
         let result = transport.reopen_stream(StreamType::Audio).await;
         assert!(result.is_err());
@@ -884,10 +941,13 @@ mod stream_tests {
     #[tokio::test]
     async fn test_open_stream_count() {
         let transport = QuicMediaTransport::new();
-        transport.connect(PeerConnection {
-            peer_id: "test-peer".to_string(),
-            remote_addr: "127.0.0.1:8080".parse().unwrap(),
-        }).await.unwrap();
+        transport
+            .connect(PeerConnection {
+                peer_id: "test-peer".to_string(),
+                remote_addr: "127.0.0.1:8080".parse().unwrap(),
+            })
+            .await
+            .unwrap();
 
         assert_eq!(transport.open_stream_count().await, 0);
 
@@ -901,10 +961,13 @@ mod stream_tests {
     #[tokio::test]
     async fn test_open_stream_types() {
         let transport = QuicMediaTransport::new();
-        transport.connect(PeerConnection {
-            peer_id: "test-peer".to_string(),
-            remote_addr: "127.0.0.1:8080".parse().unwrap(),
-        }).await.unwrap();
+        transport
+            .connect(PeerConnection {
+                peer_id: "test-peer".to_string(),
+                remote_addr: "127.0.0.1:8080".parse().unwrap(),
+            })
+            .await
+            .unwrap();
 
         transport.open_stream(StreamType::Audio).await.unwrap();
         transport.open_stream(StreamType::Video).await.unwrap();
@@ -966,7 +1029,7 @@ pub mod framing {
         let expected_len = u16::from_be_bytes([len_bytes[0], len_bytes[1]]);
 
         let packet_data = &data[2..];
-        
+
         if packet_data.len() < expected_len as usize {
             return Err(format!(
                 "Incomplete packet: {} bytes (expected {})",
@@ -998,13 +1061,16 @@ pub mod framing {
 
             let len_bytes = &data[offset..offset + 2];
             let frame_len = u16::from_be_bytes([len_bytes[0], len_bytes[1]]) as usize;
-            
+
             let frame_start = offset + 2;
             let frame_end = frame_start + frame_len;
 
             if frame_end > data.len() {
-                return Err(format!("Incomplete frame: {} bytes (expected {})", 
-                    data.len() - frame_start, frame_len));
+                return Err(format!(
+                    "Incomplete frame: {} bytes (expected {})",
+                    data.len() - frame_start,
+                    frame_len
+                ));
             }
 
             frames.push(&data[frame_start..frame_end]);
@@ -1094,7 +1160,7 @@ pub mod framing {
             let original = &[0x80, 0x60, 0x00, 0x01, 0xAA, 0xBB, 0xCC, 0xDD];
             let framed = frame_rtp(original).unwrap();
             let (len, packet) = unframe_rtp(&framed).unwrap();
-            
+
             assert_eq!(len as usize, original.len());
             assert_eq!(packet, original);
         }
@@ -1103,7 +1169,7 @@ pub mod framing {
         fn test_split_frames_single() {
             let packet = &[0x80, 0x60, 0x00, 0x01];
             let framed = frame_rtp(packet).unwrap();
-            
+
             let frames = split_frames(&framed).unwrap();
             assert_eq!(frames.len(), 1);
             assert_eq!(frames[0], packet);
@@ -1113,11 +1179,11 @@ pub mod framing {
         fn test_split_frames_multiple() {
             let packet1 = &[0x80, 0x60];
             let packet2 = &[0x81, 0x61, 0xAA, 0xBB];
-            
+
             let mut combined = Vec::new();
             combined.extend_from_slice(&frame_rtp(packet1).unwrap());
             combined.extend_from_slice(&frame_rtp(packet2).unwrap());
-            
+
             let frames = split_frames(&combined).unwrap();
             assert_eq!(frames.len(), 2);
             assert_eq!(frames[0], packet1);
@@ -1128,7 +1194,7 @@ pub mod framing {
         fn test_split_frames_incomplete() {
             let packet = &[0x80, 0x60];
             let framed = frame_rtp(packet).unwrap();
-            
+
             let incomplete = &framed[0..3]; // Missing 1 byte of payload
             let result = split_frames(incomplete);
             assert!(result.is_err());
@@ -1197,17 +1263,12 @@ impl QuicMediaTransport {
         self.ensure_stream_open(stream_type).await?;
 
         // Frame the packet with length prefix
-        let framed = framing::frame_rtp(packet)
-            .map_err(MediaTransportError::FramingError)?;
+        let framed = framing::frame_rtp(packet).map_err(MediaTransportError::FramingError)?;
 
         // Record statistics
         self.record_sent(stream_type, framed.len() as u64).await;
 
-        tracing::debug!(
-            "Sent {} bytes on stream {:?}",
-            framed.len(),
-            stream_type
-        );
+        tracing::debug!("Sent {} bytes on stream {:?}", framed.len(), stream_type);
 
         Ok(())
     }
@@ -1444,7 +1505,7 @@ mod send_recv_tests {
 
         let packet = &[0x80, 0x60, 0x00, 0x01];
         let result = transport.send_rtp(StreamType::Audio, packet).await;
-        
+
         // Should succeed since we opened the stream
         assert!(result.is_ok());
     }
@@ -1604,7 +1665,10 @@ mod send_recv_tests {
     async fn test_recv_rtcp_with_stream() {
         let transport = QuicMediaTransport::new();
         transport.connect(test_peer()).await.unwrap();
-        transport.open_stream(StreamType::RtcpFeedback).await.unwrap();
+        transport
+            .open_stream(StreamType::RtcpFeedback)
+            .await
+            .unwrap();
 
         let result = transport.recv_rtcp().await;
         // Should fail with integration placeholder
@@ -1686,7 +1750,10 @@ mod send_recv_tests {
         assert!(result.is_ok());
 
         // Open RTCP stream and try to receive
-        transport.open_stream(StreamType::RtcpFeedback).await.unwrap();
+        transport
+            .open_stream(StreamType::RtcpFeedback)
+            .await
+            .unwrap();
         let recv_result = transport.recv_rtcp().await;
         assert!(recv_result.is_err()); // Placeholder
 
@@ -1723,7 +1790,7 @@ impl QuicMediaTransport {
         let audio_prio = StreamPriority::from(StreamType::Audio);
         let video_prio = StreamPriority::from(StreamType::Video);
         let data_prio = StreamPriority::from(StreamType::Data);
-        
+
         audio_prio < video_prio && audio_prio < data_prio
     }
 
@@ -1737,7 +1804,7 @@ impl QuicMediaTransport {
         let audio_prio = StreamPriority::from(StreamType::Audio);
         let video_prio = StreamPriority::from(StreamType::Video);
         let data_prio = StreamPriority::from(StreamType::Data);
-        
+
         audio_prio < video_prio && video_prio < data_prio
     }
 
@@ -1753,7 +1820,11 @@ impl QuicMediaTransport {
         for handle in streams.values() {
             if handle.is_open {
                 let prio = StreamPriority::from(handle.stream_type);
-                stats.push((handle.stream_type, prio, (handle.bytes_sent, handle.bytes_received)));
+                stats.push((
+                    handle.stream_type,
+                    prio,
+                    (handle.bytes_sent, handle.bytes_received),
+                ));
             }
         }
 
@@ -1904,8 +1975,14 @@ mod priority_tests {
         assert_eq!(priorities.len(), 2);
 
         // Audio should come before video
-        let audio_idx = priorities.iter().position(|p| p.0 == StreamType::Audio).unwrap();
-        let video_idx = priorities.iter().position(|p| p.0 == StreamType::Video).unwrap();
+        let audio_idx = priorities
+            .iter()
+            .position(|p| p.0 == StreamType::Audio)
+            .unwrap();
+        let video_idx = priorities
+            .iter()
+            .position(|p| p.0 == StreamType::Video)
+            .unwrap();
         assert!(audio_idx < video_idx);
     }
 
@@ -1924,10 +2001,10 @@ mod priority_tests {
         // Verify ordering: Audio < Video < Data
         assert_eq!(stats[0].0, StreamType::Audio);
         assert_eq!(stats[0].1, StreamPriority::High);
-        
+
         assert_eq!(stats[1].0, StreamType::Video);
         assert_eq!(stats[1].1, StreamPriority::Medium);
-        
+
         assert_eq!(stats[2].0, StreamType::Data);
         assert_eq!(stats[2].1, StreamPriority::Low);
     }

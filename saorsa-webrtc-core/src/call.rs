@@ -5,6 +5,7 @@
 
 use crate::identity::PeerIdentity;
 use crate::media::{MediaStreamManager, WebRtcTrack};
+use crate::quic_media_transport::QuicMediaTransport;
 use crate::types::{CallEvent, CallId, CallState, MediaConstraints};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -53,8 +54,10 @@ pub struct Call<I: PeerIdentity> {
     pub id: CallId,
     /// Remote peer
     pub remote_peer: I,
-    /// WebRTC peer connection
+    /// WebRTC peer connection (legacy, will be removed in Phase 3.2)
     pub peer_connection: Arc<RTCPeerConnection>,
+    /// QUIC-based media transport (Phase 3 migration)
+    pub media_transport: Option<Arc<QuicMediaTransport>>,
     /// Current state
     pub state: CallState,
     /// Media constraints
@@ -184,6 +187,7 @@ impl<I: PeerIdentity> CallManager<I> {
             id: call_id,
             remote_peer: callee.clone(),
             peer_connection,
+            media_transport: None,
             state: CallState::Calling,
             constraints: constraints.clone(),
             tracks,

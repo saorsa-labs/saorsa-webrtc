@@ -712,8 +712,26 @@ pub mod stream_routing {
         // But common audio PTs: 0-23 are static
         matches!(
             payload_type,
-            0 | 1 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19
-                | 25 | 97
+            0 | 1
+                | 3
+                | 4
+                | 5
+                | 6
+                | 7
+                | 8
+                | 9
+                | 10
+                | 11
+                | 12
+                | 13
+                | 14
+                | 15
+                | 16
+                | 17
+                | 18
+                | 19
+                | 25
+                | 97
         )
     }
 
@@ -865,9 +883,7 @@ impl WebRtcProtocolHandler {
     /// # Returns
     ///
     /// A description of the media type
-    pub fn stream_media_type(
-        stream_type: crate::link_transport::StreamType,
-    ) -> &'static str {
+    pub fn stream_media_type(stream_type: crate::link_transport::StreamType) -> &'static str {
         match stream_type {
             crate::link_transport::StreamType::Audio => "Audio RTP",
             crate::link_transport::StreamType::Video => "Video RTP",

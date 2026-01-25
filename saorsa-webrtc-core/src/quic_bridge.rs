@@ -56,14 +56,17 @@ impl StreamType {
             Self::RtcpFeedback => 1, // RTCP is critical for QoS
             Self::Video => 2,
             Self::ScreenShare => 3,
-            Self::Data => 4,         // Lowest priority
+            Self::Data => 4, // Lowest priority
         }
     }
 
     /// Check if stream is real-time (audio/video)
     #[must_use]
     pub const fn is_realtime(&self) -> bool {
-        matches!(self, Self::Audio | Self::Video | Self::ScreenShare | Self::RtcpFeedback)
+        matches!(
+            self,
+            Self::Audio | Self::Video | Self::ScreenShare | Self::RtcpFeedback
+        )
     }
 
     /// Convert to stream type tag byte for QUIC framing
@@ -371,7 +374,11 @@ impl WebRtcQuicBridge {
             .await
             .map_err(|e| BridgeError::StreamError(format!("Failed to send packet: {}", e)))?;
 
-        tracing::debug!("Sent RTP packet of size {} bytes with type tag 0x{:02X}", data.len(), packet.stream_type.to_tag());
+        tracing::debug!(
+            "Sent RTP packet of size {} bytes with type tag 0x{:02X}",
+            data.len(),
+            packet.stream_type.to_tag()
+        );
 
         Ok(())
     }
@@ -478,10 +485,22 @@ mod tests {
 
     #[test]
     fn test_stream_type_from_tag() {
-        assert_eq!(StreamType::from_tag(stream_tags::AUDIO), Some(StreamType::Audio));
-        assert_eq!(StreamType::from_tag(stream_tags::VIDEO), Some(StreamType::Video));
-        assert_eq!(StreamType::from_tag(stream_tags::SCREEN_SHARE), Some(StreamType::ScreenShare));
-        assert_eq!(StreamType::from_tag(stream_tags::DATA), Some(StreamType::Data));
+        assert_eq!(
+            StreamType::from_tag(stream_tags::AUDIO),
+            Some(StreamType::Audio)
+        );
+        assert_eq!(
+            StreamType::from_tag(stream_tags::VIDEO),
+            Some(StreamType::Video)
+        );
+        assert_eq!(
+            StreamType::from_tag(stream_tags::SCREEN_SHARE),
+            Some(StreamType::ScreenShare)
+        );
+        assert_eq!(
+            StreamType::from_tag(stream_tags::DATA),
+            Some(StreamType::Data)
+        );
         assert_eq!(StreamType::from_tag(0xFF), None); // Invalid tag
     }
 
@@ -573,21 +592,23 @@ mod tests {
             (StreamType::ScreenShare, stream_tags::SCREEN_SHARE),
             (StreamType::Data, stream_tags::DATA),
         ] {
-            let packet = RtpPacket::new(
-                96,
-                1000,
-                10000,
-                0x12345678,
-                vec![0x01, 0x02],
-                *stream_type,
-            )
-            .expect("Failed to create packet");
+            let packet =
+                RtpPacket::new(96, 1000, 10000, 0x12345678, vec![0x01, 0x02], *stream_type)
+                    .expect("Failed to create packet");
 
             let tagged = packet.to_tagged_bytes().expect("Failed to tag");
-            assert_eq!(tagged[0], *expected_tag, "Tag mismatch for {:?}", stream_type);
+            assert_eq!(
+                tagged[0], *expected_tag,
+                "Tag mismatch for {:?}",
+                stream_type
+            );
 
             let restored = RtpPacket::from_tagged_bytes(&tagged).expect("Failed to restore");
-            assert_eq!(restored.stream_type, *stream_type, "Type mismatch for {:?}", stream_type);
+            assert_eq!(
+                restored.stream_type, *stream_type,
+                "Type mismatch for {:?}",
+                stream_type
+            );
         }
     }
 

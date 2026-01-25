@@ -94,10 +94,8 @@ pub mod quic_media_transport;
 #[cfg(feature = "legacy-webrtc")]
 pub use call::{CallManager, CallManagerConfig};
 pub use identity::{PeerIdentity, PeerIdentityString};
-pub use link_transport::{LinkTransport, LinkTransportError, PeerConnection, StreamType as LinkStreamType};
-pub use quic_media_transport::{
-    MediaTransportError, MediaTransportState, QuicMediaTransport, StreamHandle, StreamPriority,
-    TransportStats,
+pub use link_transport::{
+    LinkTransport, LinkTransportError, PeerConnection, StreamType as LinkStreamType,
 };
 #[cfg(feature = "legacy-webrtc")]
 pub use media::{
@@ -108,6 +106,10 @@ pub use protocol_handler::{
     WebRtcProtocolHandlerBuilder,
 };
 pub use quic_bridge::{RtpPacket, StreamConfig, StreamType, WebRtcQuicBridge};
+pub use quic_media_transport::{
+    MediaTransportError, MediaTransportState, QuicMediaTransport, StreamHandle, StreamPriority,
+    TransportStats,
+};
 pub use service::{WebRtcConfig, WebRtcEvent, WebRtcService, WebRtcServiceBuilder};
 pub use signaling::{
     SignalingHandler, SignalingMessage as SignalingMessageType, SignalingTransport,

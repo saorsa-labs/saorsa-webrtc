@@ -162,9 +162,7 @@ pub trait LinkTransport: Send + Sync {
     /// # Errors
     ///
     /// Returns error if receive fails
-    async fn receive(
-        &self,
-    ) -> Result<(PeerConnection, StreamType, Vec<u8>), LinkTransportError>;
+    async fn receive(&self) -> Result<(PeerConnection, StreamType, Vec<u8>), LinkTransportError>;
 
     /// Send data to default peer (convenience method)
     ///
@@ -193,10 +191,7 @@ pub trait LinkTransport: Send + Sync {
     /// # Errors
     ///
     /// Returns error if unable to set default peer
-    fn set_default_peer(
-        &mut self,
-        peer: PeerConnection,
-    ) -> Result<(), LinkTransportError> {
+    fn set_default_peer(&mut self, peer: PeerConnection) -> Result<(), LinkTransportError> {
         let _ = peer;
         Err(LinkTransportError::NotConnected)
     }
@@ -220,7 +215,10 @@ mod tests {
         assert_eq!(StreamType::try_from_u8(0x20), Some(StreamType::Audio));
         assert_eq!(StreamType::try_from_u8(0x21), Some(StreamType::Video));
         assert_eq!(StreamType::try_from_u8(0x22), Some(StreamType::Screen));
-        assert_eq!(StreamType::try_from_u8(0x23), Some(StreamType::RtcpFeedback));
+        assert_eq!(
+            StreamType::try_from_u8(0x23),
+            Some(StreamType::RtcpFeedback)
+        );
         assert_eq!(StreamType::try_from_u8(0x24), Some(StreamType::Data));
         assert_eq!(StreamType::try_from_u8(0x25), None);
         assert_eq!(StreamType::try_from_u8(0xFF), None);

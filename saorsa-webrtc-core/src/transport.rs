@@ -250,7 +250,10 @@ impl AntQuicTransport {
     /// # Errors
     ///
     /// Returns error if stream type is invalid
-    pub fn get_stream_handle(&self, stream_type: LinkStreamType) -> Result<LinkStreamType, TransportError> {
+    pub fn get_stream_handle(
+        &self,
+        stream_type: LinkStreamType,
+    ) -> Result<LinkStreamType, TransportError> {
         // Validate stream type is in expected range
         if stream_type.as_u8() >= 0x20 && stream_type.as_u8() <= 0x24 {
             Ok(stream_type)
@@ -333,9 +336,11 @@ impl AntQuicTransport {
         stream_type: LinkStreamType,
         data: &[u8],
     ) -> Result<(), TransportError> {
-        let span = tracing::debug_span!("transport_send_stream",
-                                        stream_type = stream_type.as_u8(),
-                                        data_len = data.len());
+        let span = tracing::debug_span!(
+            "transport_send_stream",
+            stream_type = stream_type.as_u8(),
+            data_len = data.len()
+        );
         let _enter = span.enter();
 
         // Validate stream type
@@ -362,9 +367,9 @@ impl AntQuicTransport {
         // For now, infer stream type from data length
         // Future: extract from QUIC stream ID metadata
         let stream_type = if data.len() > 1000 {
-            LinkStreamType::Video  // Assume large packets are video
+            LinkStreamType::Video // Assume large packets are video
         } else {
-            LinkStreamType::Audio  // Assume small packets are audio
+            LinkStreamType::Audio // Assume small packets are audio
         };
 
         Ok((data, stream_type))
@@ -548,7 +553,11 @@ impl crate::link_transport::LinkTransport for AntQuicTransport {
             .map_err(|e| crate::link_transport::LinkTransportError::IoError(e.to_string()))
     }
 
-    async fn connect(&mut self, addr: SocketAddr) -> Result<crate::link_transport::PeerConnection, crate::link_transport::LinkTransportError> {
+    async fn connect(
+        &mut self,
+        addr: SocketAddr,
+    ) -> Result<crate::link_transport::PeerConnection, crate::link_transport::LinkTransportError>
+    {
         let peer_id_str = self
             .connect_to_peer(addr)
             .await
@@ -560,7 +569,12 @@ impl crate::link_transport::LinkTransport for AntQuicTransport {
         })
     }
 
-    async fn accept(&mut self) -> Result<Option<crate::link_transport::PeerConnection>, crate::link_transport::LinkTransportError> {
+    async fn accept(
+        &mut self,
+    ) -> Result<
+        Option<crate::link_transport::PeerConnection>,
+        crate::link_transport::LinkTransportError,
+    > {
         // Accept is handled in the background task spawned by start()
         // Return None for now - actual connections are tracked via the peer_map
         Ok(None)
@@ -585,16 +599,25 @@ impl crate::link_transport::LinkTransport for AntQuicTransport {
 
         // Look up peer_id from peer_map
         let peer_map = self.peer_map.read().await;
-        let peer_id = peer_map
-            .get(&peer.peer_id)
-            .ok_or_else(|| crate::link_transport::LinkTransportError::PeerNotFound(peer.peer_id.clone()))?;
+        let peer_id = peer_map.get(&peer.peer_id).ok_or_else(|| {
+            crate::link_transport::LinkTransportError::PeerNotFound(peer.peer_id.clone())
+        })?;
 
         node.send(peer_id, &framed)
             .await
             .map_err(|e| crate::link_transport::LinkTransportError::SendError(e.to_string()))
     }
 
-    async fn receive(&self) -> Result<(crate::link_transport::PeerConnection, crate::link_transport::StreamType, Vec<u8>), crate::link_transport::LinkTransportError> {
+    async fn receive(
+        &self,
+    ) -> Result<
+        (
+            crate::link_transport::PeerConnection,
+            crate::link_transport::StreamType,
+            Vec<u8>,
+        ),
+        crate::link_transport::LinkTransportError,
+    > {
         use std::time::Duration;
 
         let node = self
@@ -615,8 +638,9 @@ impl crate::link_transport::LinkTransport for AntQuicTransport {
         }
 
         let stream_type_byte = data[0];
-        let stream_type = crate::link_transport::StreamType::try_from_u8(stream_type_byte)
-            .ok_or(crate::link_transport::LinkTransportError::InvalidStreamType(stream_type_byte))?;
+        let stream_type = crate::link_transport::StreamType::try_from_u8(stream_type_byte).ok_or(
+            crate::link_transport::LinkTransportError::InvalidStreamType(stream_type_byte),
+        )?;
 
         let length = u16::from_be_bytes([data[1], data[2]]) as usize;
         if 3 + length > data.len() {
@@ -638,14 +662,20 @@ impl crate::link_transport::LinkTransport for AntQuicTransport {
         Ok((
             crate::link_transport::PeerConnection {
                 peer_id: peer_str,
-                remote_addr: SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 0),
+                remote_addr: SocketAddr::new(
+                    std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+                    0,
+                ),
             },
             stream_type,
             payload,
         ))
     }
 
-    fn default_peer(&self) -> Result<crate::link_transport::PeerConnection, crate::link_transport::LinkTransportError> {
+    fn default_peer(
+        &self,
+    ) -> Result<crate::link_transport::PeerConnection, crate::link_transport::LinkTransportError>
+    {
         // This is a blocking method, so we need to access the Arc directly
         // In practice, this should be called only when we know a peer exists
         // For now, return error - use async methods instead
@@ -662,8 +692,6 @@ impl crate::link_transport::LinkTransport for AntQuicTransport {
         Err(crate::link_transport::LinkTransportError::NotConnected)
     }
 }
-
-
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
@@ -767,14 +795,14 @@ mod link_transport_tests {
     async fn test_link_transport_start_stop() {
         let config = TransportConfig::default();
         let mut transport = AntQuicTransport::new(config);
-        
+
         // Start should succeed
         let result = transport.start().await;
         assert!(result.is_ok());
-        
+
         // Should be running after start
         assert!(transport.is_running().await);
-        
+
         // Stop should succeed
         let result = transport.stop();
         assert!(result.is_ok());
@@ -783,11 +811,11 @@ mod link_transport_tests {
     #[tokio::test]
     async fn test_link_transport_framing_audio() {
         let _config = TransportConfig::default();
-        
+
         // Test stream type framing for audio
         let stream_type = StreamType::Audio;
         let payload = b"audio_data".to_vec();
-        
+
         // Frame would be: [0x20][0x00, 0x0A][audio_data]
         assert_eq!(stream_type.as_u8(), 0x20);
         assert_eq!(payload.len(), 10);
@@ -796,11 +824,11 @@ mod link_transport_tests {
     #[tokio::test]
     async fn test_link_transport_framing_video() {
         let _config = TransportConfig::default();
-        
+
         // Test stream type for video (larger packet)
         let stream_type = StreamType::Video;
         let large_payload = vec![0u8; 5000]; // 5KB payload
-        
+
         // Frame would be: [0x21][0x13, 0x88][large_payload]
         assert_eq!(stream_type.as_u8(), 0x21);
         assert_eq!(large_payload.len(), 5000);
@@ -810,7 +838,7 @@ mod link_transport_tests {
     async fn test_link_transport_stream_types() {
         let config = TransportConfig::default();
         let transport = AntQuicTransport::new(config);
-        
+
         // Verify all stream types are valid
         let types = vec![
             StreamType::Audio,
@@ -819,7 +847,7 @@ mod link_transport_tests {
             StreamType::RtcpFeedback,
             StreamType::Data,
         ];
-        
+
         for stream_type in types {
             let result = transport.get_stream_handle(stream_type);
             assert!(result.is_ok());
@@ -835,7 +863,7 @@ mod link_transport_tests {
             (StreamType::RtcpFeedback, 0x23),
             (StreamType::Data, 0x24),
         ];
-        
+
         for (stream_type, byte_value) in test_cases {
             assert_eq!(stream_type.as_u8(), byte_value);
             assert_eq!(StreamType::try_from_u8(byte_value), Some(stream_type));
