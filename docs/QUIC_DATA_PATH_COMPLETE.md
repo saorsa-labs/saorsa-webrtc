@@ -234,7 +234,7 @@ Result: 60/63 tests passed (95%)
 - ✅ Encrypted transport (QUIC AEAD)
 
 ### Performance
-- ✅ Efficient serialization (bincode)
+- ✅ Efficient serialization (postcard)
 - ✅ Zero-copy where possible
 - ✅ Async/await for non-blocking I/O
 - ✅ Proper buffer management

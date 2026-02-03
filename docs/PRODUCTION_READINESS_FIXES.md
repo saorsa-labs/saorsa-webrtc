@@ -9,7 +9,7 @@ Comprehensive production readiness review completed for saorsa-webrtc v0.1.0. Al
 ### 1. ✅ DoS Vulnerability - Unbounded Deserialization (CRITICAL)
 **Location**: `src/quic_bridge.rs:121-148`
 
-**Issue**: `bincode::deserialize` accepted untrusted input without size limits, allowing arbitrary memory allocation attacks.
+**Issue**: Deserialization accepted untrusted input without size limits, allowing arbitrary memory allocation attacks.
 
 **Fix**: 
 - Added pre-deserialization size validation (max 1200 bytes)
@@ -28,7 +28,7 @@ pub fn from_bytes(data: &[u8]) -> Result<Self> {
         return Err(anyhow::anyhow!("Data size {} exceeds maximum {}", ...));
     }
     
-    bincode::deserialize(data)...
+    postcard::from_bytes(data)...
 }
 ```
 

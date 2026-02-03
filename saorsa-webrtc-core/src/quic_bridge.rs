@@ -169,7 +169,7 @@ impl RtpPacket {
     ///
     /// Returns error if serialization fails
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
-        bincode::serialize(self)
+        postcard::to_stdvec(self)
             .map_err(|e| anyhow::anyhow!("Failed to serialize RTP packet: {}", e))
     }
 
@@ -195,7 +195,7 @@ impl RtpPacket {
         }
 
         // Deserialize with pre-validated size limit
-        bincode::deserialize(data)
+        postcard::from_bytes(data)
             .map_err(|e| anyhow::anyhow!("Failed to deserialize RTP packet: {}", e))
     }
 

@@ -209,7 +209,7 @@ manager.close_stream(stream_id)?;
    - Maximum payload: 1188 bytes (after 12-byte RTP header)
    
 2. **Serialization**:
-   - Uses `bincode` for efficient binary serialization
+   - Uses `postcard` for efficient binary serialization
    - Size validation before deserialization prevents DoS
    
 3. **Priority Handling**:

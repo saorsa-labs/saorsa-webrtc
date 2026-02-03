@@ -10,7 +10,7 @@ All QUIC media data path components have been successfully implemented with prop
 
 #### ✅ send_rtp_packet()
 - **Implementation**: Uses existing `AntQuicTransport::send_bytes()` method
-- **Serialization**: RTP packets serialized via `packet.to_bytes()` (bincode)
+- **Serialization**: RTP packets serialized via `packet.to_bytes()` (postcard)
 - **Validation**: Checks packet size against max_packet_size (1200 bytes)
 - **Tracing**: Added debug span with stream_type, priority, and sequence number
 - **Error Handling**: Returns `BridgeError::ConfigError` or `BridgeError::StreamError`
@@ -91,8 +91,8 @@ let (peer_id, data) = node.receive().await
 
 ### 3. RTP Packet Serialization
 
-- **Format**: Binary serialization via `bincode`
-- **Size Limits**: 
+- **Format**: Binary serialization via `postcard`
+- **Size Limits**:
   - Max packet: 1200 bytes
   - Max payload: 1188 bytes (12-byte header)
 - **Validation**: Pre-send and post-receive size checks
@@ -254,7 +254,7 @@ match result {
 
 ### 6. Performance Notes
 
-- Bincode serialization is very fast (~100ns for typical RTP packets)
+- Postcard serialization is very fast (~100ns for typical RTP packets)
 - No heap allocations in hot path except Vec for data
 - QUIC encryption overhead handled by ant-quic
 - Network I/O is async, doesn't block
