@@ -84,6 +84,7 @@ saorsa-webrtc-codecs = { version = "0.3.0", path = "../saorsa-webrtc-codecs" }
 # Utilities
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tokio-stream = "0.1"
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 tempfile = "3.10"

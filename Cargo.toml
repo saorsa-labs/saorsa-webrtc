@@ -6,6 +6,7 @@ members = [
     "saorsa-webrtc-ffi",
     "saorsa-webrtc-tauri",
     "saorsa-webrtc-codecs",
+    "workspace-hack",
 ]
 
 [workspace.package]

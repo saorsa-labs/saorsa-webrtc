@@ -27,3 +27,4 @@ ratatui = "0.25"
 viuer = "0.7"
 directories = "5.0"
 rand = "0.8"
+workspace-hack = { version = "0.1", path = "../workspace-hack" }

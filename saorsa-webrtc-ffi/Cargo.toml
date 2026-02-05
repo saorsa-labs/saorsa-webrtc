@@ -14,6 +14,7 @@ crate-type = ["cdylib", "staticlib"]
 saorsa-webrtc-core = { version = "0.3.0", path = "../saorsa-webrtc-core" }
 tokio.workspace = true
 once_cell = "1.19"
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [build-dependencies]
 cbindgen = "0.26"
