@@ -20,7 +20,7 @@ aes-gcm = { version = "0.10", features = ["std"] }
 aho-corasick = { version = "1" }
 base16ct = { version = "0.2", default-features = false, features = ["alloc"] }
 base64ct = { version = "1", default-features = false, features = ["alloc"] }
-bytemuck = { version = "1", default-features = false, features = ["extern_crate_alloc"] }
+bytemuck = { version = "1", default-features = false, features = ["aarch64_simd", "extern_crate_alloc", "wasm_simd"] }
 byteorder = { version = "1" }
 bytes = { version = "1", features = ["serde"] }
 cipher = { version = "0.4", default-features = false, features = ["alloc", "block-padding", "zeroize"] }
@@ -103,6 +103,7 @@ simd-adler32 = { version = "0.3" }
 smallvec = { version = "1", default-features = false, features = ["const_new"] }
 stable_deref_trait = { version = "1" }
 subtle = { version = "2", features = ["const-generics"] }
+syn-7b89eefb6aaa9bf3 = { package = "syn", version = "3", features = ["full", "visit-mut"] }
 syn-dff4ba8e3ae991db = { package = "syn", version = "1", features = ["extra-traits", "fold", "full"] }
 syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 tauri-utils = { version = "1", default-features = false, features = ["build", "compression", "resources"] }

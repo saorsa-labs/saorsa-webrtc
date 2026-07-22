@@ -16,9 +16,15 @@
 //!   and is unreachable in default builds.
 //!
 //! ## OpenH264 (Video)
-//! - **Still a stub/simulation** (out of scope for the audio revival —
-//!   see `docs/design/revival-v0-v1.md`): validates sizes/formats, does
-//!   not perform real video coding. Not for production video calls.
+//! - **Real Cisco OpenH264** encode/decode via the `openh264` crate,
+//!   behind the **off-by-default `h264` feature** (video is opt-in; see
+//!   `LICENSING-H264.md` for the patent-licensing implications before
+//!   enabling in a shipped product). Verified by `tests/h264_interop.rs`
+//!   (raw-openh264 interop, PSNR, compression, and NAL-structure
+//!   assertions).
+//! - The old pass-through simulation survives in `openh264::stub` behind
+//!   `cfg(any(test, feature = "stub-codecs"))`; it is not H.264 and is
+//!   unreachable in default builds.
 
 pub mod openh264;
 pub mod opus;
@@ -47,6 +53,10 @@ pub enum CodecError {
     InvalidDimensions(u32, u32),
     #[error("Data size exceeds maximum allowed: {actual} > {max}")]
     SizeExceeded { actual: usize, max: usize },
+    #[error("Encode failed: {0}")]
+    EncodeFailed(String),
+    #[error("Decode failed: {0}")]
+    DecodeFailed(String),
 }
 
 /// Codec result type
@@ -89,6 +99,8 @@ pub trait VideoDecoder: Send + Sync {
     fn decode(&mut self, data: &[u8]) -> Result<VideoFrame>;
 }
 
+pub use openh264::OpenH264EncoderConfig;
+#[cfg(feature = "h264")]
 pub use openh264::{OpenH264Decoder, OpenH264Encoder};
 pub use opus::{AudioFrame, Channels, OpusEncoderConfig, SampleRate};
 #[cfg(feature = "opus")]
