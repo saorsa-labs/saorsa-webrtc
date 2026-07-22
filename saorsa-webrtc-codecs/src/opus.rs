@@ -1,16 +1,21 @@
-//! Opus audio codec implementation
+//! Opus audio codec.
 //!
-//! # ⚠️ STUB IMPLEMENTATION
+//! With the default `opus` feature enabled, [`OpusEncoder`] and
+//! [`OpusDecoder`] wrap the real libopus (via the `opus` crate):
+//! 48 kHz mono, 20 ms frames and a configurable bitrate by default.
 //!
-//! This is currently a **simulation implementation** for development and testing.
-//! It validates frame sizes and formats but doesn't perform real audio compression.
+//! The Opus bitstream does not carry timestamps; [`AudioFrame::timestamp`]
+//! travels out-of-band (e.g. RTP or the QUIC media framing), so decoded
+//! frames report `timestamp = 0` and callers restamp from their transport.
 //!
-//! **Not suitable for production audio calls.**
-//!
-//! For production use, replace with actual libopus integration using the
-//! opus crate or similar library.
+//! A legacy pass-through simulation is kept for tests only, behind
+//! `#[cfg(any(test, feature = "stub-codecs"))]` in [`stub`]. It performs no
+//! compression and must never be used for production audio.
 
-use crate::{CodecError, Result};
+#[cfg(feature = "opus")]
+use crate::CodecError;
+use crate::Result;
+#[cfg(feature = "opus")]
 use bytes::Bytes;
 
 /// Opus audio sample rates (Hz)
@@ -24,6 +29,7 @@ pub enum SampleRate {
 }
 
 impl SampleRate {
+    /// The sample rate in hertz.
     pub fn as_hz(&self) -> u32 {
         *self as u32
     }
@@ -37,15 +43,19 @@ pub enum Channels {
 }
 
 impl Channels {
+    /// The number of channels.
     pub fn count(&self) -> usize {
         *self as usize
     }
 }
 
-/// Audio frame for encoding/decoding
+/// Audio frame for encoding/decoding.
+///
+/// `data` is interleaved 16-bit signed PCM. `timestamp` is carried
+/// out-of-band by the transport layer, not inside the Opus bitstream.
 #[derive(Debug, Clone)]
 pub struct AudioFrame {
-    /// PCM audio data (16-bit signed samples)
+    /// PCM audio data (16-bit signed samples, interleaved when stereo)
     pub data: Vec<i16>,
     /// Sample rate in Hz
     pub sample_rate: SampleRate,
@@ -74,468 +84,361 @@ impl Default for OpusEncoderConfig {
     }
 }
 
-/// Opus audio encoder (stub implementation)
-pub struct OpusEncoder {
-    config: OpusEncoderConfig,
+/// Legal Opus frame durations in microseconds (2.5, 5, 10, 20, 40, 60 ms).
+pub const OPUS_FRAME_DURATIONS_US: [u32; 6] = [2_500, 5_000, 10_000, 20_000, 40_000, 60_000];
+
+/// Samples per channel for a 20 ms frame at the given rate — the default
+/// frame duration used across the crate.
+pub fn samples_per_20ms(sample_rate: SampleRate) -> usize {
+    (sample_rate.as_hz() as usize) / 50
 }
 
+#[cfg(feature = "opus")]
+fn map_channels(channels: Channels) -> opus::Channels {
+    match channels {
+        Channels::Mono => opus::Channels::Mono,
+        Channels::Stereo => opus::Channels::Stereo,
+    }
+}
+
+#[cfg(feature = "opus")]
+fn is_legal_frame(samples_per_channel: usize, sample_rate: SampleRate) -> bool {
+    let hz = sample_rate.as_hz() as u64;
+    OPUS_FRAME_DURATIONS_US
+        .iter()
+        .any(|us| (hz * u64::from(*us)) / 1_000_000 == samples_per_channel as u64)
+}
+
+/// Opus audio encoder backed by libopus (VoIP application profile).
+#[cfg(feature = "opus")]
+pub struct OpusEncoder {
+    config: OpusEncoderConfig,
+    inner: opus::Encoder,
+}
+
+#[cfg(feature = "opus")]
 impl OpusEncoder {
+    /// Create an encoder for the given configuration.
     pub fn new(config: OpusEncoderConfig) -> Result<Self> {
-        // Validate bitrate
-        if config.bitrate < 6000 || config.bitrate > 510000 {
+        if config.bitrate < 6000 || config.bitrate > 510_000 {
             return Err(CodecError::InvalidData(
                 "bitrate out of range (6000-510000)",
             ));
         }
-
-        Ok(Self { config })
+        let mut inner = opus::Encoder::new(
+            config.sample_rate.as_hz(),
+            map_channels(config.channels),
+            opus::Application::Voip,
+        )
+        .map_err(|e| CodecError::InitFailed(format!("opus encoder: {e}")))?;
+        inner
+            .set_bitrate(opus::Bitrate::Bits(config.bitrate as i32))
+            .map_err(|e| CodecError::InitFailed(format!("opus bitrate: {e}")))?;
+        Ok(Self { config, inner })
     }
 
-    /// Encode PCM audio data to Opus
+    /// Encode one PCM frame to an Opus packet.
+    ///
+    /// The frame must contain a legal Opus frame duration of samples
+    /// (2.5/5/10/20/40/60 ms) matching the encoder's sample rate and
+    /// channel count; 20 ms is the crate default
+    /// (see [`samples_per_20ms`]).
     pub fn encode(&mut self, frame: &AudioFrame) -> Result<Bytes> {
-        // Validate frame matches encoder config
         if frame.sample_rate != self.config.sample_rate {
             return Err(CodecError::InvalidData("sample rate mismatch"));
         }
         if frame.channels != self.config.channels {
             return Err(CodecError::InvalidData("channel count mismatch"));
         }
-
-        // Validate frame size (must have data)
         if frame.data.is_empty() {
             return Err(CodecError::InvalidData("empty audio frame"));
         }
-
-        // TODO: Replace with real Opus encoding
-        // For now, create a simple compressed representation
-        let mut compressed = Vec::new();
-
-        // Header: sample_rate (4 bytes), channels (1 byte), timestamp (8 bytes)
-        compressed.extend_from_slice(&self.config.sample_rate.as_hz().to_le_bytes());
-        compressed.push(self.config.channels.count() as u8);
-        compressed.extend_from_slice(&frame.timestamp.to_le_bytes());
-
-        // Stub compression: store length and simple RLE
-        let data_len = frame.data.len() as u32;
-        compressed.extend_from_slice(&data_len.to_le_bytes());
-
-        // Simple compression for testing
-        let bytes: Vec<u8> = frame.data.iter().flat_map(|s| s.to_le_bytes()).collect();
-        compressed.extend_from_slice(&bytes);
-
-        Ok(Bytes::from(compressed))
+        let per_channel = frame.data.len() / self.config.channels.count();
+        if !frame
+            .data
+            .len()
+            .is_multiple_of(self.config.channels.count())
+            || !is_legal_frame(per_channel, self.config.sample_rate)
+        {
+            return Err(CodecError::InvalidData(
+                "frame length is not a legal Opus frame duration",
+            ));
+        }
+        // Worst-case packet bound; real VoIP packets are far smaller.
+        let max_size = 4000;
+        let packet = self
+            .inner
+            .encode_vec(&frame.data, max_size)
+            .map_err(|e| CodecError::InitFailed(format!("opus encode: {e}")))?;
+        Ok(Bytes::from(packet))
     }
 }
 
-/// Opus audio decoder (stub implementation)
+/// Opus audio decoder backed by libopus.
+#[cfg(feature = "opus")]
 pub struct OpusDecoder {
-    #[allow(dead_code)]
     sample_rate: SampleRate,
-    #[allow(dead_code)]
     channels: Channels,
+    inner: opus::Decoder,
 }
 
+#[cfg(feature = "opus")]
 impl OpusDecoder {
+    /// Create a decoder; the sample rate and channel count must match the
+    /// stream's negotiated parameters.
     pub fn new(sample_rate: SampleRate, channels: Channels) -> Result<Self> {
+        let inner = opus::Decoder::new(sample_rate.as_hz(), map_channels(channels))
+            .map_err(|e| CodecError::InitFailed(format!("opus decoder: {e}")))?;
         Ok(Self {
             sample_rate,
             channels,
+            inner,
         })
     }
 
-    /// Decode Opus data to PCM audio
+    /// Decode one Opus packet to PCM.
+    ///
+    /// The returned frame's `timestamp` is `0`: Opus packets carry no
+    /// timestamps — the transport layer restamps frames.
     pub fn decode(&mut self, data: &[u8]) -> Result<AudioFrame> {
-        // Minimum size: 4 (sample_rate) + 1 (channels) + 8 (timestamp) + 4 (length)
-        const HEADER_SIZE: usize = 17;
-
-        if data.len() < HEADER_SIZE {
-            return Err(CodecError::InvalidData("opus data too small"));
+        if data.is_empty() {
+            return Err(CodecError::InvalidData("empty opus packet"));
         }
-
-        // Parse header
-        let sample_rate_hz = u32::from_le_bytes(
-            data.get(0..4)
-                .and_then(|s| s.try_into().ok())
-                .ok_or(CodecError::InvalidData("invalid sample rate"))?,
-        );
-
-        let sample_rate = match sample_rate_hz {
-            8000 => SampleRate::Hz8000,
-            12000 => SampleRate::Hz12000,
-            16000 => SampleRate::Hz16000,
-            24000 => SampleRate::Hz24000,
-            48000 => SampleRate::Hz48000,
-            _ => return Err(CodecError::InvalidData("unsupported sample rate")),
-        };
-
-        let channel_count = data[4];
-        let channels = match channel_count {
-            1 => Channels::Mono,
-            2 => Channels::Stereo,
-            _ => return Err(CodecError::InvalidData("invalid channel count")),
-        };
-
-        let timestamp = u64::from_le_bytes(
-            data.get(5..13)
-                .and_then(|s| s.try_into().ok())
-                .ok_or(CodecError::InvalidData("invalid timestamp"))?,
-        );
-
-        let data_len = u32::from_le_bytes(
-            data.get(13..17)
-                .and_then(|s| s.try_into().ok())
-                .ok_or(CodecError::InvalidData("invalid data length"))?,
-        ) as usize;
-
-        // Parse PCM data
-        let pcm_bytes = data
-            .get(HEADER_SIZE..)
-            .ok_or(CodecError::InvalidData("missing pcm data"))?;
-
-        let mut pcm_data = Vec::with_capacity(data_len);
-        for chunk in pcm_bytes.chunks_exact(2) {
-            if let Ok(bytes) = chunk.try_into() {
-                pcm_data.push(i16::from_le_bytes(bytes));
-            }
-        }
-
-        // Validate we got the expected amount of data
-        if pcm_data.len() != data_len {
-            return Err(CodecError::InvalidData("pcm data length mismatch"));
-        }
-
+        // Largest legal frame: 60 ms.
+        let max_per_channel = (self.sample_rate.as_hz() as usize * 60) / 1000;
+        let mut pcm = vec![0i16; max_per_channel * self.channels.count()];
+        let decoded_per_channel = self
+            .inner
+            .decode(data, &mut pcm, false)
+            .map_err(|e| CodecError::InitFailed(format!("opus decode: {e}")))?;
+        pcm.truncate(decoded_per_channel * self.channels.count());
         Ok(AudioFrame {
-            data: pcm_data,
-            sample_rate,
-            channels,
-            timestamp,
+            data: pcm,
+            sample_rate: self.sample_rate,
+            channels: self.channels,
+            timestamp: 0,
         })
     }
 }
 
-#[cfg(test)]
+/// Test-only pass-through simulation of the Opus interfaces.
+///
+/// Performs **no compression** — it round-trips PCM verbatim with a small
+/// header. Exists so transport-layer tests can run without libopus.
+/// Never available in default builds.
+#[cfg(any(test, feature = "stub-codecs"))]
+pub mod stub {
+    use super::{AudioFrame, Channels, OpusEncoderConfig, SampleRate};
+    use crate::{CodecError, Result};
+    use bytes::Bytes;
+
+    /// Pass-through "encoder" (no compression; tests only).
+    pub struct StubOpusEncoder {
+        config: OpusEncoderConfig,
+    }
+
+    impl StubOpusEncoder {
+        /// Create a stub encoder.
+        pub fn new(config: OpusEncoderConfig) -> Result<Self> {
+            if config.bitrate < 6000 || config.bitrate > 510_000 {
+                return Err(CodecError::InvalidData(
+                    "bitrate out of range (6000-510000)",
+                ));
+            }
+            Ok(Self { config })
+        }
+
+        /// "Encode" by prefixing a header and copying PCM bytes verbatim.
+        pub fn encode(&mut self, frame: &AudioFrame) -> Result<Bytes> {
+            if frame.sample_rate != self.config.sample_rate {
+                return Err(CodecError::InvalidData("sample rate mismatch"));
+            }
+            if frame.channels != self.config.channels {
+                return Err(CodecError::InvalidData("channel count mismatch"));
+            }
+            if frame.data.is_empty() {
+                return Err(CodecError::InvalidData("empty audio frame"));
+            }
+            let mut out = Vec::new();
+            out.extend_from_slice(&self.config.sample_rate.as_hz().to_le_bytes());
+            out.push(self.config.channels.count() as u8);
+            out.extend_from_slice(&frame.timestamp.to_le_bytes());
+            out.extend_from_slice(&(frame.data.len() as u32).to_le_bytes());
+            let bytes: Vec<u8> = frame.data.iter().flat_map(|s| s.to_le_bytes()).collect();
+            out.extend_from_slice(&bytes);
+            Ok(Bytes::from(out))
+        }
+    }
+
+    /// Pass-through "decoder" (tests only).
+    pub struct StubOpusDecoder;
+
+    impl StubOpusDecoder {
+        /// Create a stub decoder.
+        pub fn new(_sample_rate: SampleRate, _channels: Channels) -> Result<Self> {
+            Ok(Self)
+        }
+
+        /// Reverse [`StubOpusEncoder::encode`].
+        pub fn decode(&mut self, data: &[u8]) -> Result<AudioFrame> {
+            const HEADER_SIZE: usize = 17;
+            if data.len() < HEADER_SIZE {
+                return Err(CodecError::InvalidData("opus data too small"));
+            }
+            let sample_rate_hz = u32::from_le_bytes(
+                data.get(0..4)
+                    .and_then(|s| s.try_into().ok())
+                    .ok_or(CodecError::InvalidData("invalid sample rate"))?,
+            );
+            let sample_rate = match sample_rate_hz {
+                8000 => SampleRate::Hz8000,
+                12000 => SampleRate::Hz12000,
+                16000 => SampleRate::Hz16000,
+                24000 => SampleRate::Hz24000,
+                48000 => SampleRate::Hz48000,
+                _ => return Err(CodecError::InvalidData("unsupported sample rate")),
+            };
+            let channels = match data[4] {
+                1 => Channels::Mono,
+                2 => Channels::Stereo,
+                _ => return Err(CodecError::InvalidData("invalid channel count")),
+            };
+            let timestamp = u64::from_le_bytes(
+                data.get(5..13)
+                    .and_then(|s| s.try_into().ok())
+                    .ok_or(CodecError::InvalidData("invalid timestamp"))?,
+            );
+            let data_len = u32::from_le_bytes(
+                data.get(13..17)
+                    .and_then(|s| s.try_into().ok())
+                    .ok_or(CodecError::InvalidData("invalid data length"))?,
+            ) as usize;
+            let pcm_bytes = data
+                .get(HEADER_SIZE..)
+                .ok_or(CodecError::InvalidData("missing pcm data"))?;
+            let mut pcm_data = Vec::with_capacity(data_len);
+            for chunk in pcm_bytes.chunks_exact(2) {
+                if let Ok(bytes) = chunk.try_into() {
+                    pcm_data.push(i16::from_le_bytes(bytes));
+                }
+            }
+            if pcm_data.len() != data_len {
+                return Err(CodecError::InvalidData("pcm data length mismatch"));
+            }
+            Ok(AudioFrame {
+                data: pcm_data,
+                sample_rate,
+                channels,
+                timestamp,
+            })
+        }
+    }
+}
+
+#[cfg(all(test, feature = "opus"))]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_encoder_creation_default() {
-        let config = OpusEncoderConfig::default();
-        let result = OpusEncoder::new(config);
-        assert!(result.is_ok());
+    fn tone_frame(samples: usize, timestamp: u64) -> AudioFrame {
+        let data: Vec<i16> = (0..samples)
+            .map(|i| {
+                (((i as f32) * 440.0 * 2.0 * std::f32::consts::PI / 48000.0).sin() * 16000.0) as i16
+            })
+            .collect();
+        AudioFrame {
+            data,
+            sample_rate: SampleRate::Hz48000,
+            channels: Channels::Mono,
+            timestamp,
+        }
     }
 
     #[test]
-    fn test_encoder_creation_custom() {
-        let config = OpusEncoderConfig {
+    fn encoder_creation_default_and_custom() {
+        assert!(OpusEncoder::new(OpusEncoderConfig::default()).is_ok());
+        assert!(OpusEncoder::new(OpusEncoderConfig {
             sample_rate: SampleRate::Hz16000,
             channels: Channels::Stereo,
             bitrate: 96000,
-        };
-        let result = OpusEncoder::new(config);
-        assert!(result.is_ok());
+        })
+        .is_ok());
     }
 
     #[test]
-    fn test_encoder_invalid_bitrate() {
-        let config = OpusEncoderConfig {
-            bitrate: 5000, // Too low
+    fn encoder_invalid_bitrate() {
+        assert!(OpusEncoder::new(OpusEncoderConfig {
+            bitrate: 5000,
             ..Default::default()
-        };
-        assert!(OpusEncoder::new(config).is_err());
-
-        let config = OpusEncoderConfig {
-            bitrate: 520000, // Too high
+        })
+        .is_err());
+        assert!(OpusEncoder::new(OpusEncoderConfig {
+            bitrate: 520_000,
             ..Default::default()
-        };
-        assert!(OpusEncoder::new(config).is_err());
+        })
+        .is_err());
     }
 
     #[test]
-    fn test_decoder_creation() {
-        let result = OpusDecoder::new(SampleRate::Hz48000, Channels::Mono);
-        assert!(result.is_ok());
+    fn encode_rejects_mismatch_and_illegal_length() {
+        let mut enc = OpusEncoder::new(OpusEncoderConfig::default()).unwrap();
+        // sample-rate mismatch
+        let mut f = tone_frame(960, 0);
+        f.sample_rate = SampleRate::Hz16000;
+        assert!(enc.encode(&f).is_err());
+        // channel mismatch
+        let mut f = tone_frame(960, 0);
+        f.channels = Channels::Stereo;
+        assert!(enc.encode(&f).is_err());
+        // empty
+        let mut f = tone_frame(960, 0);
+        f.data.clear();
+        assert!(enc.encode(&f).is_err());
+        // illegal duration (1000 samples @48k is not 2.5/5/10/20/40/60 ms)
+        let f = tone_frame(1000, 0);
+        assert!(enc.encode(&f).is_err());
     }
 
     #[test]
-    fn test_encode_decode_roundtrip_mono() {
-        let config = OpusEncoderConfig::default();
-        let mut encoder = OpusEncoder::new(config).unwrap();
-        let mut decoder = OpusDecoder::new(SampleRate::Hz48000, Channels::Mono).unwrap();
+    fn encode_20ms_roundtrip_and_compression() {
+        let mut enc = OpusEncoder::new(OpusEncoderConfig::default()).unwrap();
+        let mut dec = OpusDecoder::new(SampleRate::Hz48000, Channels::Mono).unwrap();
+        let n = samples_per_20ms(SampleRate::Hz48000);
+        assert_eq!(n, 960);
+        let frame = tone_frame(n, 42);
+        let packet = enc.encode(&frame).unwrap();
+        // Real compression: 20 ms @ 64 kbps must be well under raw PCM
+        // (1920 bytes) — the historical stub fails this by construction.
+        assert!(
+            packet.len() <= 200,
+            "expected <=200 byte packet, got {}",
+            packet.len()
+        );
+        let decoded = dec.decode(&packet).unwrap();
+        assert_eq!(decoded.data.len(), n);
+        assert_eq!(decoded.sample_rate, SampleRate::Hz48000);
+        assert_eq!(decoded.channels, Channels::Mono);
+        // Timestamps travel out-of-band.
+        assert_eq!(decoded.timestamp, 0);
+    }
 
-        // Create test audio (1 second at 48kHz, sine wave)
-        let samples = 48000;
-        let mut audio_data = Vec::with_capacity(samples);
-        for i in 0..samples {
-            let sample = (((i as f32) * 440.0 * 2.0 * std::f32::consts::PI / 48000.0).sin()
-                * 16000.0) as i16;
-            audio_data.push(sample);
-        }
+    #[test]
+    fn decoder_rejects_garbage() {
+        let mut dec = OpusDecoder::new(SampleRate::Hz48000, Channels::Mono).unwrap();
+        assert!(dec.decode(&[]).is_err());
+        // A long run of 0xFF is not a valid TOC/packet for libopus.
+        assert!(dec.decode(&[0xFFu8; 3]).is_err());
+    }
 
-        let frame = AudioFrame {
-            data: audio_data.clone(),
-            sample_rate: SampleRate::Hz48000,
-            channels: Channels::Mono,
-            timestamp: 1000,
-        };
-
-        let compressed = encoder.encode(&frame).unwrap();
-        let decoded = decoder.decode(&compressed).unwrap();
-
-        assert_eq!(decoded.sample_rate, frame.sample_rate);
-        assert_eq!(decoded.channels, frame.channels);
-        assert_eq!(decoded.timestamp, frame.timestamp);
-        assert_eq!(decoded.data.len(), frame.data.len());
+    #[test]
+    fn stub_still_roundtrips_for_transport_tests() {
+        use super::stub::{StubOpusDecoder, StubOpusEncoder};
+        let mut enc = StubOpusEncoder::new(OpusEncoderConfig::default()).unwrap();
+        let mut dec = StubOpusDecoder::new(SampleRate::Hz48000, Channels::Mono).unwrap();
+        let frame = tone_frame(1000, 7); // arbitrary length allowed by the stub
+        let packet = enc.encode(&frame).unwrap();
+        let decoded = dec.decode(&packet).unwrap();
         assert_eq!(decoded.data, frame.data);
-    }
-
-    #[test]
-    fn test_encode_decode_roundtrip_stereo() {
-        let config = OpusEncoderConfig {
-            sample_rate: SampleRate::Hz48000,
-            channels: Channels::Stereo,
-            bitrate: 128000,
-        };
-        let mut encoder = OpusEncoder::new(config).unwrap();
-        let mut decoder = OpusDecoder::new(SampleRate::Hz48000, Channels::Stereo).unwrap();
-
-        // Create stereo test audio (interleaved L/R)
-        let samples = 96000; // 1 second stereo at 48kHz (2 channels)
-        let audio_data: Vec<i16> = (0..samples).map(|i| (i % 1000) as i16).collect();
-
-        let frame = AudioFrame {
-            data: audio_data,
-            sample_rate: SampleRate::Hz48000,
-            channels: Channels::Stereo,
-            timestamp: 2000,
-        };
-
-        let compressed = encoder.encode(&frame).unwrap();
-        let decoded = decoder.decode(&compressed).unwrap();
-
-        assert_eq!(decoded.sample_rate, frame.sample_rate);
-        assert_eq!(decoded.channels, frame.channels);
-        assert_eq!(decoded.timestamp, frame.timestamp);
-        assert_eq!(decoded.data, frame.data);
-    }
-
-    #[test]
-    fn test_encoder_sample_rate_mismatch() {
-        let config = OpusEncoderConfig {
-            sample_rate: SampleRate::Hz48000,
-            ..Default::default()
-        };
-        let mut encoder = OpusEncoder::new(config).unwrap();
-
-        let frame = AudioFrame {
-            data: vec![0; 100],
-            sample_rate: SampleRate::Hz16000, // Mismatch!
-            channels: Channels::Mono,
-            timestamp: 0,
-        };
-
-        assert!(encoder.encode(&frame).is_err());
-    }
-
-    #[test]
-    fn test_encoder_channel_mismatch() {
-        let config = OpusEncoderConfig {
-            channels: Channels::Mono,
-            ..Default::default()
-        };
-        let mut encoder = OpusEncoder::new(config).unwrap();
-
-        let frame = AudioFrame {
-            data: vec![0; 100],
-            sample_rate: SampleRate::Hz48000,
-            channels: Channels::Stereo, // Mismatch!
-            timestamp: 0,
-        };
-
-        assert!(encoder.encode(&frame).is_err());
-    }
-
-    #[test]
-    fn test_encoder_empty_frame() {
-        let config = OpusEncoderConfig::default();
-        let mut encoder = OpusEncoder::new(config).unwrap();
-
-        let frame = AudioFrame {
-            data: vec![], // Empty!
-            sample_rate: SampleRate::Hz48000,
-            channels: Channels::Mono,
-            timestamp: 0,
-        };
-
-        assert!(encoder.encode(&frame).is_err());
-    }
-
-    #[test]
-    fn test_decoder_corrupted_data() {
-        let mut decoder = OpusDecoder::new(SampleRate::Hz48000, Channels::Mono).unwrap();
-
-        // Data too small
-        let corrupted = vec![0u8; 10];
-        assert!(decoder.decode(&corrupted).is_err());
-    }
-
-    #[test]
-    fn test_decoder_invalid_sample_rate() {
-        let mut decoder = OpusDecoder::new(SampleRate::Hz48000, Channels::Mono).unwrap();
-
-        let mut data = Vec::new();
-        data.extend_from_slice(&99999u32.to_le_bytes()); // Invalid sample rate
-        data.push(1); // Mono
-        data.extend_from_slice(&1000u64.to_le_bytes()); // Timestamp
-        data.extend_from_slice(&100u32.to_le_bytes()); // Length
-        data.extend_from_slice(&[0u8; 200]); // Data
-
-        assert!(decoder.decode(&data).is_err());
-    }
-
-    #[test]
-    fn test_decoder_invalid_channels() {
-        let mut decoder = OpusDecoder::new(SampleRate::Hz48000, Channels::Mono).unwrap();
-
-        let mut data = Vec::new();
-        data.extend_from_slice(&48000u32.to_le_bytes());
-        data.push(5); // Invalid channel count
-        data.extend_from_slice(&1000u64.to_le_bytes());
-        data.extend_from_slice(&100u32.to_le_bytes());
-        data.extend_from_slice(&[0u8; 200]);
-
-        assert!(decoder.decode(&data).is_err());
-    }
-
-    #[test]
-    fn test_different_sample_rates() {
-        for &sample_rate in &[
-            SampleRate::Hz8000,
-            SampleRate::Hz12000,
-            SampleRate::Hz16000,
-            SampleRate::Hz24000,
-            SampleRate::Hz48000,
-        ] {
-            let config = OpusEncoderConfig {
-                sample_rate,
-                ..Default::default()
-            };
-            let mut encoder = OpusEncoder::new(config).unwrap();
-            let mut decoder = OpusDecoder::new(sample_rate, Channels::Mono).unwrap();
-
-            let frame = AudioFrame {
-                data: vec![100; 1000],
-                sample_rate,
-                channels: Channels::Mono,
-                timestamp: 5000,
-            };
-
-            let compressed = encoder.encode(&frame).unwrap();
-            let decoded = decoder.decode(&compressed).unwrap();
-
-            assert_eq!(decoded.sample_rate, sample_rate);
-            assert_eq!(decoded.data, frame.data);
-        }
-    }
-
-    #[test]
-    fn test_timestamp_preservation() {
-        let config = OpusEncoderConfig::default();
-        let mut encoder = OpusEncoder::new(config).unwrap();
-        let mut decoder = OpusDecoder::new(SampleRate::Hz48000, Channels::Mono).unwrap();
-
-        let timestamps = vec![0u64, 1000, u64::MAX / 2, u64::MAX - 1000];
-
-        for ts in timestamps {
-            let frame = AudioFrame {
-                data: vec![42; 480], // 10ms at 48kHz
-                sample_rate: SampleRate::Hz48000,
-                channels: Channels::Mono,
-                timestamp: ts,
-            };
-
-            let compressed = encoder.encode(&frame).unwrap();
-            let decoded = decoder.decode(&compressed).unwrap();
-
-            assert_eq!(decoded.timestamp, ts);
-        }
-    }
-}
-
-#[cfg(test)]
-#[allow(clippy::unwrap_used)]
-mod proptests {
-    use super::*;
-    use proptest::prelude::*;
-
-    fn sample_rate_strategy() -> impl Strategy<Value = SampleRate> {
-        prop_oneof![
-            Just(SampleRate::Hz8000),
-            Just(SampleRate::Hz12000),
-            Just(SampleRate::Hz16000),
-            Just(SampleRate::Hz24000),
-            Just(SampleRate::Hz48000),
-        ]
-    }
-
-    fn channels_strategy() -> impl Strategy<Value = Channels> {
-        prop_oneof![Just(Channels::Mono), Just(Channels::Stereo),]
-    }
-
-    proptest! {
-        #[test]
-        fn prop_encode_decode_roundtrip(
-            sample_rate in sample_rate_strategy(),
-            channels in channels_strategy(),
-            bitrate in 6000u32..=510000,
-            timestamp in any::<u64>(),
-            audio_len in 1usize..=10000,
-        ) {
-            let config = OpusEncoderConfig { sample_rate, channels, bitrate };
-            let mut encoder = OpusEncoder::new(config)?;
-            let mut decoder = OpusDecoder::new(sample_rate, channels)?;
-
-            let audio_data: Vec<i16> = (0..audio_len).map(|i| (i % 1000) as i16).collect();
-            let frame = AudioFrame {
-                data: audio_data.clone(),
-                sample_rate,
-                channels,
-                timestamp,
-            };
-
-            let compressed = encoder.encode(&frame)?;
-            let decoded = decoder.decode(&compressed)?;
-
-            prop_assert_eq!(decoded.sample_rate, sample_rate);
-            prop_assert_eq!(decoded.channels, channels);
-            prop_assert_eq!(decoded.timestamp, timestamp);
-            prop_assert_eq!(decoded.data, audio_data);
-        }
-
-        #[test]
-        fn prop_encoder_rejects_mismatched_config(
-            encoder_rate in sample_rate_strategy(),
-            frame_rate in sample_rate_strategy(),
-            encoder_channels in channels_strategy(),
-            frame_channels in channels_strategy(),
-        ) {
-            if encoder_rate != frame_rate || encoder_channels != frame_channels {
-                let config = OpusEncoderConfig {
-                    sample_rate: encoder_rate,
-                    channels: encoder_channels,
-                    bitrate: 64000,
-                };
-                let mut encoder = OpusEncoder::new(config)?;
-
-                let frame = AudioFrame {
-                    data: vec![0; 100],
-                    sample_rate: frame_rate,
-                    channels: frame_channels,
-                    timestamp: 0,
-                };
-
-                prop_assert!(encoder.encode(&frame).is_err());
-            }
-        }
+        assert_eq!(decoded.timestamp, 7);
     }
 }
