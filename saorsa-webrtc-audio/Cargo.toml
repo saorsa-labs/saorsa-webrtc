@@ -1,0 +1,21 @@
+[package]
+name = "saorsa-webrtc-audio"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Audio capture and playout (cpal) for Saorsa WebRTC — 20 ms PCM framing, no DSP (headset-first)"
+documentation = "https://docs.rs/saorsa-webrtc-audio"
+
+[dependencies]
+saorsa-webrtc-codecs = { version = "0.4.0", path = "../saorsa-webrtc-codecs" }
+cpal = { workspace = true }
+rubato = { workspace = true }
+crossbeam-channel = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
+
+[dev-dependencies]

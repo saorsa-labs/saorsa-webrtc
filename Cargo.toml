@@ -6,6 +6,7 @@ members = [
     "saorsa-webrtc-ffi",
     "saorsa-webrtc-tauri",
     "saorsa-webrtc-codecs",
+    "saorsa-webrtc-audio",
     "workspace-hack",
 ]
 
@@ -36,6 +37,11 @@ saorsa-pqc = "0.5"
 # Codecs
 openh264 = "0.7"
 opus = "0.3"
+
+# Audio I/O (saorsa-webrtc-audio)
+cpal = "0.16"
+rubato = { version = "0.16", default-features = false }
+crossbeam-channel = "0.5"
 
 # CLI
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
