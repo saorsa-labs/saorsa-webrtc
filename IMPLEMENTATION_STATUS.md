@@ -1,154 +1,43 @@
 # Implementation Status
 
-## ✅ Completed
+Last updated: 2026-07-22 (revival R0). Rule of this file: **no capability is
+claimed without naming its passing test.**
 
-### Core
-- [x] Workspace structure created
-- [x] Core module migrated with QUIC integration
-- [x] WebRTC service with call management
-- [x] Signaling and transport layers
-- [x] Media handling infrastructure
-- [x] Comprehensive error handling
+## Working (test-backed)
 
-### Codecs
-- [x] OpenH264 video codec (stub with full interface)
-  - Encoder with configurable dimensions
-  - Decoder with validation
-  - 17 unit tests + 4 property-based tests
-- [x] Opus audio codec (stub with full interface)
-  - Configurable sample rates (8kHz - 48kHz)
-  - Mono and stereo support
-  - Bitrate validation (6-510 kbps)
-  - 12 unit tests + 2 property-based tests
-  - Full encode/decode roundtrip testing
+| Capability | Proof |
+|---|---|
+| QUIC-native 1:1 media transport over **ant-quic 0.27.34** (single workspace version) | full workspace suite green post-upgrade; `cargo tree -i ant-quic` shows one version |
+| **Real Opus** encode/decode (48 kHz mono, 20 ms frames, VoIP profile) — default feature | `saorsa-webrtc-codecs/tests/opus_interop.rs`: interop with the raw `opus` crate decoder, lag-aligned SNR > 10 dB, compression assertion (20 ms frame ≤ ~200 B at 64 kbps vs 1,920 B PCM) |
+| Two **real** ant-quic nodes exchanging audio frames (RTP framing via `WebRtcQuicBridge`, and raw frames via `LinkTransport` `StreamType::Audio`) | `saorsa-webrtc-core/tests/e2e_two_nodes_audio.rs`: 250/250 frames byte-identical each path; loopback one-way p95 < 4 ms |
+| QUIC-native signaling flow (`CapabilityExchange → ConnectionConfirm → ConnectionReady → Bye`) over real nodes | same e2e file, `signaling_handshake_and_bye_over_two_real_nodes` |
+| Pluggable signaling (`SignalingTransport` trait) with `AntQuicTransport` impl | `core/src/signaling.rs` unit tests + the e2e above |
 
-### CLI
-- [x] CLI module with clap argument parsing
-- [x] Terminal UI with ratatui
-  - Call initiation and listening modes
-  - Real-time statistics display
-  - Interactive controls (mute, video toggle)
-  - Sixel and ASCII display mode support
-  - Clean terminal restoration on exit
+## Known transport semantics (measured, not speculative)
 
-### FFI Bindings
-- [x] C bindings for mobile/desktop integration
-  - Safe initialization and cleanup
-  - Call lifecycle management
-  - Proper error codes and state tracking
-  - String handling with safety checks
-  - 12 comprehensive tests
-  - Zero panics/unwraps/expects (production-ready)
+- ant-quic's per-message API does **not** preserve cross-message order
+  (~4–5% reorder observed on loopback; each send rides its own uni-stream).
+  Receivers must reorder by sequence number; a jitter buffer is **required**
+  for real-time audio (WP-V1.3). See the module docs in
+  `e2e_two_nodes_audio.rs`.
 
-### Tauri Plugin
-- [x] Tauri commands implementation
-  - Identity initialization with validation
-  - Call initiation with UUID generation
-  - Call state management
-  - List active calls
-  - Proper async/await patterns
-  - 4 unit tests
+## Not implemented (types/stubs only — do not rely on)
 
-### Testing
-- [x] 54+ unit tests across all modules
-- [x] Property-based testing for codecs
-- [x] Integration test infrastructure
-- [x] All tests passing (`cargo test --workspace`)
-- [x] Strict clippy linting (panic/unwrap/expect forbidden)
-- [x] Zero compiler warnings
-- [x] Release build successful
+- **Group calls:** `CallArchitecture::{Mesh, SFU}` are type definitions
+  only. No mesh manager, no SFU, no mixer exists.
+- **Video codecs:** OpenH264 is a stub behind a feature; the Opus stub
+  survives only behind `cfg(any(test, feature = "stub-codecs"))` for
+  transport-layer tests.
+- **`QuicMediaTransport::recv_rtp`:** placeholder pending LinkTransport
+  integration (WP-V1.2); the working RTP path is `WebRtcQuicBridge`.
+- **Audio capture/playout:** no mic/speaker I/O in this workspace
+  (planned `saorsa-webrtc-audio`, WP-V1.4).
+- **x0x adapters** (`X0xSignaling`, `LinkTransport` over ADR-0022 streams,
+  datagram audio lane): designed (`docs/design/revival-v0-v1.md` V1), not
+  yet implemented.
 
-## ✅ Platform Bindings (Completed)
+## Platform bindings
 
-### Swift Bindings for iOS/macOS
-- [x] Native Swift API with type safety
-- [x] Swift Package Manager integration
-- [x] 16 comprehensive tests
-- [x] Mock mode for testing
-- [x] Complete documentation
-
-### Kotlin Bindings for Android/JVM
-- [x] Idiomatic Kotlin API with sealed classes
-- [x] Gradle/Maven integration
-- [x] 16 comprehensive tests
-- [x] Mock mode for testing
-- [x] Complete documentation
-
-See [PLATFORM_BINDINGS_SUMMARY.md](./PLATFORM_BINDINGS_SUMMARY.md) for details.
-
-## 📋 Future Enhancements
-
-### Advanced Platform Features
-- [ ] Callback/delegate support for real-time events
-- [ ] Platform-specific build scripts
-- [ ] Binary distribution packages
-
-### Real Codec Integration (When Needed)
-- [ ] Replace OpenH264 stub with actual libx264/openh264
-- [ ] Replace Opus stub with actual libopus
-- [ ] Hardware acceleration support
-
-### Enhanced Features
-- [ ] DHT-based signaling implementation
-- [ ] Advanced video rendering (actual Sixel output)
-- [ ] Network quality adaptation
-- [ ] Call recording functionality
-
-## Testing Summary
-
-Run tests with:
-```bash
-cargo test --workspace
-```
-
-Run with strict linting:
-```bash
-cargo clippy --workspace --all-features -- \
-  -D clippy::panic \
-  -D clippy::unwrap_used \
-  -D clippy::expect_used
-```
-
-Build all modules in release mode:
-```bash
-cargo build --workspace --release
-```
-
-## Test Coverage by Module
-
-| Module | Tests | Status |
-|--------|-------|--------|
-| saorsa-webrtc-core | 23 | ✅ Passing |
-| saorsa-webrtc-codecs | 35 | ✅ Passing |
-| saorsa-webrtc-cli | 4 | ✅ Passing |
-| saorsa-webrtc-ffi | 12 | ✅ Passing |
-| saorsa-webrtc-tauri | 4 | ✅ Passing |
-| saorsa-webrtc-swift | 16 | ✅ Ready (Mock) |
-| saorsa-webrtc-kotlin | 16 | ✅ Ready (Mock) |
-| **Total** | **110** | **✅ All Ready** |
-
-## Code Quality
-
-- ✅ Zero clippy errors with strict lints
-- ✅ Zero compiler warnings
-- ✅ All unsafe code properly documented
-- ✅ Comprehensive error handling
-- ✅ Production-ready panic policy enforced
-- ✅ Full TDD approach for new features
-
-## Documentation
-
-- [x] Module-level documentation
-- [x] Function-level documentation
-- [x] Safety documentation for unsafe code
-- [x] Example usage in tests
-- [ ] API reference generation (rustdoc)
-- [ ] User guide
-
-## Next Steps
-
-1. Generate API documentation: `cargo doc --workspace --no-deps --open`
-2. Add example applications demonstrating each module
-3. Performance benchmarking
-4. Security audit of unsafe code
-5. Continuous integration setup
+Swift/Kotlin/FFI/Tauri/CLI modules exist with their own unit tests but are
+untested against the revived 0.27-based core beyond compilation; treat as
+unvalidated until they appear in the table above with a named test.

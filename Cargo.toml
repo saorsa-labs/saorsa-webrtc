@@ -30,7 +30,8 @@ bytes = "1.5"
 
 # WebRTC
 webrtc = "0.13"
-ant-quic = { version = "0.21", default-features = false }
+ant-quic = "0.27.34"
+saorsa-pqc = "0.5"
 
 # Codecs
 openh264 = "0.7"

@@ -110,6 +110,7 @@ pub use quic_media_transport::{
     MediaTransportError, MediaTransportState, QuicMediaTransport, StreamHandle, StreamPriority,
     TransportStats,
 };
+#[cfg(feature = "legacy-webrtc")]
 pub use service::{WebRtcConfig, WebRtcEvent, WebRtcService, WebRtcServiceBuilder};
 pub use signaling::{
     SignalingHandler, SignalingMessage as SignalingMessageType, SignalingTransport,

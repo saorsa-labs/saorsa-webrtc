@@ -13,17 +13,10 @@ description = "Core WebRTC implementation over ant-quic transport"
 quic-native = []
 
 # Legacy WebRTC support (optional) - includes traditional webrtc crate
-# Allows fallback to ICE/DTLS/SRTP for compatibility
-legacy-webrtc = [
-    "webrtc",
-    "webrtc-ice",
-    "webrtc-media",
-    "webrtc-sctp",
-    "webrtc-srtp",
-    "webrtc-dtls",
-    "webrtc-data",
-    "interceptor",
-]
+# Allows fallback to ICE/DTLS/SRTP for compatibility. The `webrtc` crate
+# re-exports the ice/dtls/srtp/media sub-crates we use; direct deps on the
+# sub-crates were unused and removed (WP-V0.4).
+legacy-webrtc = ["dep:webrtc"]
 
 # Test utilities feature
 test-utils = []
@@ -45,46 +38,27 @@ tracing = "0.1"
 uuid = { version = "1.6", features = ["v4", "serde"] }
 bytes = "1.5"
 chrono = { version = "0.4.38", features = ["serde"] }
-base64 = "0.21"
 postcard = { version = "1.1.3", features = ["use-std"] }
 
 # Cryptography
-saorsa-pqc = "0.3.12"
 rand = "0.8"
-zeroize = { version = "1.7", features = ["derive"] }
-blake3 = "1.5"
-chacha20poly1305 = "0.10"
-
-# Performance
-parking_lot = "0.12"
-once_cell = "1.19"
 
 # Networking - ant-quic as primary transport (provides all transport types)
-ant-quic = { version = "0.20", default-features = false }
+ant-quic = { workspace = true }
 
-# WebRTC dependencies (gated by legacy-webrtc feature, which is included by default)
-# These are used for the legacy signaling path. In Phase 2, when QuicMediaTransport
-# is fully implemented, these can be removed for QUIC-native-only builds.
+# WebRTC (gated by legacy-webrtc feature, included by default). The `webrtc`
+# crate re-exports the sub-crates the legacy path touches.
 webrtc = { version = "0.13", optional = true }
-webrtc-ice = { version = "0.13", optional = true }
-webrtc-media = { version = "0.10", optional = true }
-webrtc-sctp = { version = "0.12", optional = true }
-webrtc-srtp = { version = "0.15", optional = true }
-webrtc-dtls = { version = "0.12", optional = true }
-webrtc-data = { version = "0.11", optional = true }
-interceptor = { version = "0.14", optional = true }
-
-# RTP/RTCP packet parsing (always included - no transport dependency)
-rtcp = "0.13"
-rtp = "0.13"
 
 # Codec support (new)
 saorsa-webrtc-codecs = { version = "0.3.0", path = "../saorsa-webrtc-codecs" }
 
 # Utilities
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tokio-stream = "0.1"
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
+
+[package.metadata.cargo-machete]
+# workspace-hack is hakari's build-unification crate — intentionally "unused".
+ignored = ["workspace-hack"]
 
 [dev-dependencies]
 tempfile = "3.10"

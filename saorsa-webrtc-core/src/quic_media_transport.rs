@@ -294,7 +294,7 @@ impl QuicMediaTransport {
         // Close all streams
         {
             let mut streams = self.streams.write().await;
-            for (_, stream) in streams.iter_mut() {
+            for stream in streams.values_mut() {
                 stream.is_open = false;
             }
             streams.clear();
