@@ -313,9 +313,9 @@ impl AntQuicTransport {
             .as_ref()
             .ok_or_else(|| TransportError::ReceiveError("Transport not started".to_string()))?;
 
-        let (_peer_id, data) = node
-            .recv(Duration::from_secs(30))
+        let (_peer_id, data) = tokio::time::timeout(Duration::from_secs(30), node.recv())
             .await
+            .map_err(|_| TransportError::ReceiveError("Receive timed out after 30s".to_string()))?
             .map_err(|e| TransportError::ReceiveError(format!("Failed to receive: {}", e)))?;
 
         tracing::trace!("Received {} bytes from peer", data.len());
@@ -426,9 +426,9 @@ impl SignalingTransport for AntQuicTransport {
 
         // Receive data from any peer (this will block until data arrives)
         // The Node handles incoming connections internally
-        let (peer_id, data) = node
-            .recv(Duration::from_secs(30))
+        let (peer_id, data) = tokio::time::timeout(Duration::from_secs(30), node.recv())
             .await
+            .map_err(|_| TransportError::ReceiveError("Receive timed out after 30s".to_string()))?
             .map_err(|e| TransportError::ReceiveError(format!("Failed to receive: {}", e)))?;
 
         // Check message size limit to prevent DoS
@@ -640,9 +640,13 @@ impl crate::link_transport::LinkTransport for AntQuicTransport {
             .as_ref()
             .ok_or(crate::link_transport::LinkTransportError::NotConnected)?;
 
-        let (peer_id, data) = node
-            .recv(Duration::from_secs(30))
+        let (peer_id, data) = tokio::time::timeout(Duration::from_secs(30), node.recv())
             .await
+            .map_err(|_| {
+                crate::link_transport::LinkTransportError::ReceiveError(
+                    "Receive timed out after 30s".to_string(),
+                )
+            })?
             .map_err(|e| crate::link_transport::LinkTransportError::ReceiveError(e.to_string()))?;
 
         // Parse framed message: [stream_type: 1 byte][length: 2 bytes][data]

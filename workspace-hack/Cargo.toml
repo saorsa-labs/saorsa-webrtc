@@ -41,6 +41,7 @@ indexmap = { version = "1", default-features = false, features = ["serde", "std"
 inout = { version = "0.1", default-features = false, features = ["block-padding"] }
 log = { version = "0.4", default-features = false, features = ["std"] }
 miniz_oxide = { version = "0.8", features = ["simd"] }
+mio = { version = "1", features = ["net", "os-ext"] }
 num-traits = { version = "0.2", features = ["i128"] }
 once_cell = { version = "1" }
 p256 = { version = "0.13", features = ["ecdh"] }
@@ -59,8 +60,8 @@ sec1 = { version = "0.7", features = ["pem", "std", "subtle"] }
 semver = { version = "1", features = ["serde"] }
 serde_json = { version = "1", features = ["alloc", "preserve_order", "raw_value"] }
 sha2 = { version = "0.10" }
-signature = { version = "2", default-features = false, features = ["digest", "rand_core", "std"] }
 simd-adler32 = { version = "0.3" }
+smallvec = { version = "1", default-features = false, features = ["const_new"] }
 stable_deref_trait = { version = "1" }
 subtle = { version = "2", features = ["const-generics"] }
 tauri-utils = { version = "1", default-features = false, features = ["build", "compression", "resources"] }
@@ -96,6 +97,7 @@ semver = { version = "1", features = ["serde"] }
 serde_json = { version = "1", features = ["alloc", "preserve_order", "raw_value"] }
 sha2 = { version = "0.10" }
 simd-adler32 = { version = "0.3" }
+smallvec = { version = "1", default-features = false, features = ["const_new"] }
 stable_deref_trait = { version = "1" }
 subtle = { version = "2", features = ["const-generics"] }
 syn-dff4ba8e3ae991db = { package = "syn", version = "1", features = ["extra-traits", "fold", "full"] }
