@@ -9,7 +9,7 @@ description = "Audio capture and playout (cpal) for Saorsa WebRTC — 20 ms PCM 
 documentation = "https://docs.rs/saorsa-webrtc-audio"
 
 [dependencies]
-saorsa-webrtc-codecs = { version = "0.4.0", path = "../saorsa-webrtc-codecs" }
+saorsa-webrtc-codecs = { version = "0.5.0", path = "../saorsa-webrtc-codecs" }
 cpal = { workspace = true }
 rubato = { workspace = true }
 crossbeam-channel = { workspace = true }
