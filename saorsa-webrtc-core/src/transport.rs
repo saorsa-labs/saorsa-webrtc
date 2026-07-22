@@ -23,11 +23,19 @@ const MAX_SDP_LENGTH: usize = 32 * 1024;
 pub struct TransportConfig {
     /// Local endpoint address
     pub local_addr: Option<SocketAddr>,
+    /// Which lane carries encoded audio frames. Default
+    /// [`crate::datagram_lane::AudioLaneMode::Reliable`]; the datagram
+    /// lane requires a `LinkConn`-seam connection (see `datagram_lane`
+    /// module docs).
+    pub audio_lane: crate::datagram_lane::AudioLaneMode,
 }
 
 impl Default for TransportConfig {
     fn default() -> Self {
-        Self { local_addr: None }
+        Self {
+            local_addr: None,
+            audio_lane: crate::datagram_lane::AudioLaneMode::default(),
+        }
     }
 }
 
@@ -770,6 +778,7 @@ mod tests {
     fn test_ant_quic_transport_config() {
         let config = TransportConfig {
             local_addr: Some("127.0.0.1:8080".parse().unwrap()),
+            ..TransportConfig::default()
         };
         let transport = AntQuicTransport::new(config.clone());
 

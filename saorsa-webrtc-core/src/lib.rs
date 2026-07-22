@@ -90,10 +90,21 @@ pub mod link_transport;
 /// QUIC-based media transport for RTP/RTCP over QUIC streams
 pub mod quic_media_transport;
 
+/// Unreliable datagram lane for encoded audio frames (WP-V1.3)
+pub mod datagram_lane;
+
+/// Jitter buffer between the datagram lane and playout (WP-V1.3)
+pub mod jitter;
+
 // Re-export main types at crate root
 #[cfg(feature = "legacy-webrtc")]
 pub use call::{CallManager, CallManagerConfig};
+pub use datagram_lane::{
+    AudioDatagram, AudioLaneMode, DatagramAudioLane, DatagramLaneError, DATAGRAM_HEADER_LEN,
+    MAX_DATAGRAM_PAYLOAD,
+};
 pub use identity::{PeerIdentity, PeerIdentityString};
+pub use jitter::{JitterBuffer, JitterConfig, JitterCounters, JitterEvent};
 pub use link_transport::{
     LinkTransport, LinkTransportError, PeerConnection, StreamType as LinkStreamType,
 };

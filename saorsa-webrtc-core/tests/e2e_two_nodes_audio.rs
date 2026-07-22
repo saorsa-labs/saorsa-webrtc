@@ -53,6 +53,7 @@ const PHASE_DEADLINE: Duration = Duration::from_secs(45);
 async fn start_transport(label: &str) -> (AntQuicTransport, SocketAddr) {
     let mut t = AntQuicTransport::new(TransportConfig {
         local_addr: Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)),
+        ..TransportConfig::default()
     });
     t.start().await.expect("start transport");
     let addr = t.local_addr().await.expect("local addr");
