@@ -12,18 +12,25 @@ description = "Core WebRTC implementation over ant-quic transport"
 # QUIC-native transport (default) - uses ant-quic for all media
 quic-native = []
 
+# Real H.264 in the codecs crate (from-source C++ build; patent notes in
+# saorsa-webrtc-codecs/LICENSING-H264.md). Off by default — video is opt-in.
+h264 = ["saorsa-webrtc-codecs/h264"]
+
 # Legacy WebRTC support (optional) - includes traditional webrtc crate
 # Allows fallback to ICE/DTLS/SRTP for compatibility. The `webrtc` crate
 # re-exports the ice/dtls/srtp/media sub-crates we use; direct deps on the
-# sub-crates were unused and removed (WP-V0.4).
-legacy-webrtc = ["dep:webrtc"]
+# sub-crates were unused and removed (WP-V0.4). Its media path performs real
+# video calls, so it requires the real H.264 codec.
+legacy-webrtc = ["dep:webrtc", "h264"]
 
 # Test utilities feature
 test-utils = []
 
 # Default features: Include legacy-webrtc support (for compatibility)
 # Phase 2 will allow omitting legacy-webrtc when QuicMediaTransport is ready
-default = ["quic-native", "legacy-webrtc"]
+# Voice-only consumers get no webrtc-rs stack and no C++ codec build by
+# default; legacy video callers (cli/tauri) opt in to `legacy-webrtc`.
+default = ["quic-native"]
 
 [dependencies]
 # Core async and serialization

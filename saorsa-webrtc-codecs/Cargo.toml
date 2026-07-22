@@ -27,8 +27,11 @@ proptest = "1.4"
 opus = { workspace = true }
 
 [features]
-default = ["h264", "opus"]
-h264 = ["openh264"]
+# Video (`h264`) is deliberately OFF by default: it is opt-in per the
+# revival design, adds a from-source C++ build, and has patent-licensing
+# implications for shipped products — see LICENSING-H264.md.
+default = ["opus"]
+h264 = ["dep:openh264"]
 opus = ["dep:opus"]
 # Test-only pass-through codecs (no compression). Never for production.
 stub-codecs = []
