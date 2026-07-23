@@ -3,6 +3,15 @@
 **Status:** factual summary for engineering decisions, verified against the
 dependency source on 2026-07-22. **Not legal advice.**
 
+## Decision (2026-07-23, David Irvine)
+
+Route 1 — **runtime Cisco binary via the `libloading` feature** — is the
+approved path for any shipped product that enables H.264 (install/first-run
+download flow + Cisco's binary notice in the app). Source-built OpenH264
+remains permitted for in-repo development and testing only, and the `h264`
+feature stays **off by default**. AV1 is the strategic default video codec;
+H.264 is kept for interop only.
+
 ## How our dependency actually builds
 
 The `h264` feature pulls `openh264` 0.7.x → `openh264-sys2` 0.7.x. As used
