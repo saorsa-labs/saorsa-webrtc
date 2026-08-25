@@ -318,10 +318,8 @@ pub mod stub {
                 .get(HEADER_SIZE..)
                 .ok_or(CodecError::InvalidData("missing pcm data"))?;
             let mut pcm_data = Vec::with_capacity(data_len);
-            for chunk in pcm_bytes.chunks_exact(2) {
-                if let Ok(bytes) = chunk.try_into() {
-                    pcm_data.push(i16::from_le_bytes(bytes));
-                }
+            for chunk in pcm_bytes.as_chunks::<2>().0 {
+                pcm_data.push(i16::from_le_bytes(*chunk));
             }
             if pcm_data.len() != data_len {
                 return Err(CodecError::InvalidData("pcm data length mismatch"));
