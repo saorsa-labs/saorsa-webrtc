@@ -18,14 +18,16 @@ publish = false
 aead = { version = "0.5", features = ["getrandom", "std"] }
 aes-gcm = { version = "0.10", features = ["std"] }
 aho-corasick = { version = "1" }
+aws-lc-rs = { version = "1", default-features = false, features = ["aws-lc-sys", "prebuilt-nasm", "unstable"] }
 base16ct = { version = "0.2", default-features = false, features = ["alloc"] }
 base64ct = { version = "1", default-features = false, features = ["alloc"] }
-bytemuck = { version = "1", default-features = false, features = ["extern_crate_alloc"] }
+bytemuck = { version = "1", default-features = false, features = ["aarch64_simd", "extern_crate_alloc", "wasm_simd"] }
 byteorder = { version = "1" }
 bytes = { version = "1", features = ["serde"] }
 cipher = { version = "0.4", default-features = false, features = ["alloc", "block-padding", "zeroize"] }
 clap = { version = "4", features = ["derive", "env"] }
 clap_builder = { version = "4", default-features = false, features = ["color", "env", "help", "std", "suggestions", "usage"] }
+crc32fast = { version = "1" }
 crossbeam-utils = { version = "0.8" }
 crypto-common = { version = "0.1", default-features = false, features = ["getrandom", "std"] }
 der = { version = "0.7", default-features = false, features = ["oid", "pem", "std"] }
@@ -41,7 +43,6 @@ hmac = { version = "0.12", default-features = false, features = ["reset", "std"]
 indexmap = { version = "1", default-features = false, features = ["serde", "std"] }
 inout = { version = "0.1", default-features = false, features = ["block-padding"] }
 log = { version = "0.4", default-features = false, features = ["std"] }
-miniz_oxide = { version = "0.8", features = ["simd"] }
 mio = { version = "1", features = ["net", "os-ext"] }
 num-integer = { version = "0.1", features = ["i128"] }
 num-traits = { version = "0.2", features = ["i128"] }
@@ -82,6 +83,7 @@ zeroize = { version = "1", features = ["derive"] }
 aho-corasick = { version = "1" }
 byteorder = { version = "1" }
 cc = { version = "1", default-features = false, features = ["parallel"] }
+crc32fast = { version = "1" }
 crypto-common = { version = "0.1", default-features = false, features = ["getrandom", "std"] }
 digest = { version = "0.10", features = ["mac", "oid", "std"] }
 displaydoc = { version = "0.2" }
@@ -89,7 +91,6 @@ form_urlencoded = { version = "1" }
 generic-array = { version = "0.14", default-features = false, features = ["more_lengths", "zeroize"] }
 indexmap = { version = "1", default-features = false, features = ["serde", "std"] }
 log = { version = "0.4", default-features = false, features = ["std"] }
-miniz_oxide = { version = "0.8", features = ["simd"] }
 once_cell = { version = "1" }
 percent-encoding = { version = "2" }
 phf_shared = { version = "0.10" }
@@ -106,6 +107,7 @@ simd-adler32 = { version = "0.3" }
 smallvec = { version = "1", default-features = false, features = ["const_new"] }
 stable_deref_trait = { version = "1" }
 subtle = { version = "2", features = ["const-generics"] }
+syn-7b89eefb6aaa9bf3 = { package = "syn", version = "3", features = ["extra-traits", "full", "visit-mut"] }
 syn-dff4ba8e3ae991db = { package = "syn", version = "1", features = ["extra-traits", "fold", "full"] }
 syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 tauri-utils = { version = "1", default-features = false, features = ["build", "compression", "resources"] }
