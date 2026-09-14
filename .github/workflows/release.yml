@@ -14,6 +14,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Verify crates.io credential
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: test -n "$CARGO_REGISTRY_TOKEN"
+
       - uses: actions/checkout@v4
 
       - name: Install system dependencies
