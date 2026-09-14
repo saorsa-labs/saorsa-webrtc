@@ -124,6 +124,7 @@ async fn signaling_handshake_and_bye_over_two_real_nodes() {
     // Responder task on B: expect CapabilityExchange, reply ConnectionConfirm,
     // expect ConnectionReady, expect Bye.
     let session_b = session.clone();
+    let (ready_seen_tx, ready_seen_rx) = tokio::sync::oneshot::channel();
     let responder = tokio::spawn(async move {
         let (peer_a, msg) = b.receive_message().await.expect("b recv capex");
         match msg {
@@ -154,6 +155,9 @@ async fn signaling_handshake_and_bye_over_two_real_nodes() {
             matches!(msg, SignalingMessage::ConnectionReady { ref session_id } if *session_id == session_b),
             "expected ConnectionReady, got {msg:?}"
         );
+        ready_seen_tx
+            .send(())
+            .expect("initiator waits for ready observation");
 
         let (_, msg) = b.receive_message().await.expect("b recv bye");
         assert!(
@@ -191,6 +195,11 @@ async fn signaling_handshake_and_bye_over_two_real_nodes() {
     )
     .await
     .expect("a sends ready");
+
+    tokio::time::timeout(PHASE_DEADLINE, ready_seen_rx)
+        .await
+        .expect("responder observes ready within deadline")
+        .expect("responder remains alive through ready");
 
     a.send_message(
         &peer_b,

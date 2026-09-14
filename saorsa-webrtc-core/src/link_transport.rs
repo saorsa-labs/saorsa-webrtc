@@ -76,6 +76,10 @@ pub enum LinkTransportError {
     /// IO error
     #[error("IO error: {0}")]
     IoError(String),
+
+    /// A live session already holds a resource required by this operation.
+    #[error("Session conflict: {0}")]
+    SessionConflict(String),
 }
 
 /// Represents a peer connection handle

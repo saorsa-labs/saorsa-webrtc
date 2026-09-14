@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-09-14
+
+### Added
+- `LinkTransportError::SessionConflict` exposes resource contention to trait callers without parsing error text.
+
+### Migration
+- Exhaustive matches on `LinkTransportError` must handle the new `SessionConflict(String)` variant.
+
 ## [0.3.0] - 2026-01-25
 
 ### Added
@@ -66,5 +74,6 @@ See [MIGRATION_GUIDE.md](docs/MIGRATION_GUIDE.md) for detailed migration instruc
 
 ---
 
+[0.6.0]: https://github.com/saorsa-labs/saorsa-webrtc/compare/v0.5.0...v0.6.0
 [0.3.0]: https://github.com/dirvine/saorsa-webrtc/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/dirvine/saorsa-webrtc/releases/tag/v0.2.1

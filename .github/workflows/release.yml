@@ -24,7 +24,8 @@ jobs:
             libjavascriptcoregtk-4.0-dev \
             libsoup2.4-dev \
             libappindicator3-dev \
-            librsvg2-dev
+            librsvg2-dev \
+            libasound2-dev
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -41,10 +42,38 @@ jobs:
       - name: Run tests
         run: cargo test --all-features
 
+      - name: Install cargo-hakari
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-hakari@0.9.38
+
+      - name: Strip non-publishable workspace-hack dependencies
+        run: |
+          cargo hakari remove-deps --yes
+          cargo metadata --no-deps --format-version 1 > /tmp/package-metadata.json
+          python3 - <<'PY'
+          import json
+
+          with open("/tmp/package-metadata.json", encoding="utf-8") as source:
+              metadata = json.load(source)
+          publishable = {"saorsa-webrtc-codecs", "saorsa-webrtc-core"}
+          retained = [
+              package["name"]
+              for package in metadata["packages"]
+              if package["name"] in publishable
+              and any(dependency["name"] == "workspace-hack" for dependency in package["dependencies"])
+          ]
+          if retained:
+              raise SystemExit(f"workspace-hack dependency remains in: {', '.join(retained)}")
+          PY
+
       - name: Publish saorsa-webrtc-codecs to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish -p saorsa-webrtc-codecs --allow-dirty || echo "Already published or skipped"
+        run: cargo publish -p saorsa-webrtc-codecs --allow-dirty
+
+      - name: Wait for codecs indexing
+        run: sleep 30
 
       - name: Publish saorsa-webrtc-core to crates.io
         env:
