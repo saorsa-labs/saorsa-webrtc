@@ -120,7 +120,7 @@ pub trait LinkTransport: Send + Sync {
     async fn stop(&mut self) -> Result<(), LinkTransportError>;
 
     /// Check if transport is running
-    #[must_use]
+    #[must_use = "check the return value to determine whether the transport is active"]
     async fn is_running(&self) -> bool;
 
     /// Get local address

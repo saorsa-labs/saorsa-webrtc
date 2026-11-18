@@ -11,7 +11,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.6.0"
+version = "0.6.1"
 authors = ["Saorsa Labs Limited <saorsalabs@gmail.com>", "David Irvine <david@maidsafe.com>"]
 edition = "2021"
 license = "AGPL-3.0"
@@ -31,7 +31,7 @@ bytes = "1.5"
 
 # WebRTC
 webrtc = "0.13"
-ant-quic = "0.27.34"
+ant-quic = "0.28.0"
 saorsa-pqc = "0.5"
 
 # Codecs
